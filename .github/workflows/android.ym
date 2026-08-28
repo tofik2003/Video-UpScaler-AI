@@ -1,0 +1,61 @@
+name: Android CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Assemble debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The ubuntu-latest image (Ubuntu 24.04) already has JDK 17 (default), 21 and 25,
+      # plus the Android SDK with build-tools 36.0.0 and platform android-36.
+      # setup-java just pins the version explicitly.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Fail loudly and early if the runner image ever changes under us.
+      - name: Verify toolchain
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          gradle --version
+          ls "$ANDROID_HOME/platforms"
+          ls "$ANDROID_HOME/build-tools"
+
+          # System Gradle (9.7.1 on ubuntu-latest) satisfies AGP 9.0.1's minimum of 9.1.0.
+      # No Gradle wrapper is committed yet -- see docs/BUILD_AND_RUN.md.
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      # AGP 9 may relocate build outputs. Rather than pin one path and letting the upload step fail
+      # on an otherwise-successful build, locate the APK and fail here with a useful listing.
+      - name: Locate APK
+        run: |
+          find . -name '*.apk' -not -path '*/caches/*' -print -exec ls -lh {} \;
+          if ! find . -name '*.apk' -not -path '*/caches/*' | grep -q .; then
+            echo "::error::Build reported success but produced no APK"
+            exit 1
+          fi
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: |
+            app/build/outputs/**/*.apk
+            **/outputs/apk/**/*.apk
+          if-no-files-found: error
