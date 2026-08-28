@@ -530,6 +530,23 @@ Record every model's provenance in a `MODEL_CARD.md`.
 
 Each phase has an exit gate. Do not start the next one on an unmet gate.
 
+### Status as of 2026-08-28
+
+| Phase | State | Gate |
+|---|---|---|
+| 0 | ⚠️ harness built (`tools/eval/quality.py`, self-tested), **never run on a device** | Unmet — no hardware. No latency figure here is a measurement. |
+| 1 | ✅ implemented (Compose UI, SAF, preview, export) | Unmet — **never compiled**. No JDK in the sandbox. |
+| 2 | ⚠️ code + a real 56 KB ESPCN `.tflite` complete, **unverified on device** | **FAILING** — see `MODEL_CARD.md`. ESPCN 35.01 dB vs bicubic 40.12 dB on the synthetic set. |
+| 3 | ✅ `ExportService` with `mediaProcessing` FGS, `onTimeout`, ETA, cancel | Untested. |
+| 4 | ⚠️ `CompareSlider` built with range-slider semantics; temporal stabilizer **not built** | Unmet. |
+| 5 | ❌ | Needs the device matrix. |
+| 6 | ❌ deliberately not started | Deferred below, pending Phase 0/2 evidence. |
+
+The Phase 2 result deserves care. Training a model from scratch moved it from 26.97 dB to 35.01 dB,
+which proves training, TFLite conversion, and the runtime all work. What it does **not** prove is
+quality: the synthetic test set is piecewise-smooth, which is near bicubic's best case, so there is
+almost no headroom. Real imagery is the only meaningful test, and it has not been run.
+
 **Phase 0 — Feasibility & measurement (1–2 weeks)**
 - Benchmark harness + evaluation clip set + PSNR/SSIM/LPIPS pipeline
 - Measure Tier 0/1/2 per §7

@@ -93,7 +93,12 @@ class VideoExporter(private val context: Context) {
      * No-op if an export is already running. Emits [State.Failed] synchronously if there is not
      * enough free space for a plausible output.
      */
-    fun start(inputUri: Uri, target: UpscaleChain.Target, listener: Listener) {
+    fun start(
+        inputUri: Uri,
+        target: UpscaleChain.Target,
+        tier: UpscaleChain.Tier,
+        listener: Listener,
+    ) {
         if (isRunning) return
         this.listener = listener
 
@@ -114,7 +119,7 @@ class VideoExporter(private val context: Context) {
             .setEffects(
                 Effects(
                     /* audioProcessors = */ listOf(),
-                    /* videoEffects = */ UpscaleChain.build(target),
+                    /* videoEffects = */ UpscaleChain.build(target, tier),
                 )
             )
             .build()

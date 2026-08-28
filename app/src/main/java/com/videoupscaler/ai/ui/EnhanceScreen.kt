@@ -128,6 +128,20 @@ fun EnhanceScreen(viewModel: EnhanceViewModel, onPickVideo: () -> Unit) {
 
                 StatusSection(viewModel, onPickVideo)
 
+                TierSection(
+                    tier = viewModel.tier,
+                    enabled = uri != null && !viewModel.isRunning,
+                    onChange = viewModel::setTier,
+                )
+
+                viewModel.tierWarning?.let {
+                    Text(
+                        text = stringResource(R.string.error_orientation),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
                 CompareToggle(
                     showEnhanced = viewModel.showEnhanced,
                     enabled = uri != null,
@@ -150,7 +164,7 @@ fun EnhanceScreen(viewModel: EnhanceViewModel, onPickVideo: () -> Unit) {
                 } else {
                     Button(
                         onClick = viewModel::startExport,
-                        enabled = uri != null && viewModel.playbackError == null,
+                        enabled = uri != null && viewModel.playbackError == null && viewModel.tierWarning == null,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text(stringResource(R.string.action_enhance)) }
                 }
@@ -228,6 +242,34 @@ private fun CompareToggle(showEnhanced: Boolean, enabled: Boolean, onChange: (Bo
                 onClick = { onChange(true) },
                 enabled = enabled,
                 label = { Text(stringResource(R.string.compare_enhanced)) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun TierSection(
+    tier: UpscaleChain.Tier,
+    enabled: Boolean,
+    onChange: (UpscaleChain.Tier) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(text = stringResource(R.string.label_quality), style = MaterialTheme.typography.labelLarge)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            UpscaleChain.Tier.entries.forEach { option ->
+                FilterChip(
+                    selected = option == tier,
+                    onClick = { onChange(option) },
+                    enabled = enabled,
+                    label = { Text(stringResource(option.labelRes)) },
+                )
+            }
+        }
+        if (tier == UpscaleChain.Tier.ENHANCED) {
+            Text(
+                text = stringResource(R.string.tier_enhanced_note),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

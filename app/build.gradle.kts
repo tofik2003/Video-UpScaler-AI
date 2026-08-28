@@ -60,9 +60,12 @@ dependencies {
     implementation("androidx.media3:media3-transformer:$media3")
     implementation("androidx.media3:media3-ui:$media3")
 
-    // LiteRT — Interpreter line, minSdk 21. Not used by Phase 1; pinned so the coordinates are
-    // proven to resolve before Phase 2 depends on them. Costs APK size until then.
+    // LiteRT — Interpreter line, minSdk 21. Pinned so the coordinates are proven to resolve.
+    // Standalone GPU acceleration needs all THREE artifacts, including litert-gpu-api; the docs
+    // list it and it is easy to miss. NOTE the Java package is still org.tensorflow.lite even
+    // though the Maven group is com.google.ai.edge.litert.
     val litert = "1.4.2"
     implementation("com.google.ai.edge.litert:litert:$litert")
     implementation("com.google.ai.edge.litert:litert-gpu:$litert")
+    implementation("com.google.ai.edge.litert:litert-gpu-api:$litert")
 }

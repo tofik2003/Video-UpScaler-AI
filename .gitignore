@@ -9,3 +9,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Trained checkpoints are regenerable from models/espcn/espcn.py; only the .tflite
+# the app actually loads is committed.
+*.keras
+models/espcn/__pycache__/
+tools/eval/__pycache__/

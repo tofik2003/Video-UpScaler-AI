@@ -7,6 +7,7 @@
     <string name="action_cancel">Cancel</string>
 
     <string name="label_resolution">Resolution</string>
+    <string name="label_quality">Quality</string>
     <string name="label_compare">Compare</string>
     <string name="label_free_space">%1$s MB free</string>
 
@@ -20,12 +21,30 @@
     <!-- DESIGN.md 10: state what happened, not what the system did. -->
     <string name="status_no_video">Choose a video to begin</string>
     <string name="status_exporting">Enhancing… %1$d%%</string>
+    <string name="status_exporting_short">Enhancing… %1$d%%</string>
     <string name="status_done">Saved to %1$s</string>
     <string name="status_failed">Enhancing failed: %1$s</string>
     <string name="status_cancelled">Cancelled</string>
+    <string name="status_throttled">Enhancing… device is running hot</string>
+
+    <!-- DESIGN.md: the 6h mediaProcessing budget is surfaced, never discovered mid-export. -->
+    <string name="status_timeout">Enhancing stopped</string>
+    <string name="status_timeout_detail">Android limits background video work to 6 hours a day. Open the app to continue.</string>
+
+    <string name="eta_remaining">About %1$s left</string>
+    <string name="eta_unknown">Elapsed %1$s</string>
+    <string name="channel_exports">Video exports</string>
+
+    <!-- Tier labels. DESIGN.md 5.1: "v1 ships Smooth only with no AI wording" was written when no
+         model existed. A model now exists, so Enhanced is offered — but still described by effect,
+         not by architecture. -->
+    <string name="tier_smooth">Smooth</string>
+    <string name="tier_enhanced">Enhanced</string>
+    <string name="tier_enhanced_note">Adds detail recovery. Slower, and needs a landscape source.</string>
 
     <!-- DESIGN.md 10: constraints get reasons, never bare error codes. -->
     <string name="error_storage">Needs about %1$s free; only %2$s available.</string>
     <string name="error_playback">This video could not be played (%1$s).</string>
+    <string name="error_orientation">Enhanced needs a landscape video. Try Smooth, or rotate the source.</string>
     <string name="notice_fallback">Adjusted output to fit this device.</string>
 </resources>

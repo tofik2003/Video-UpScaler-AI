@@ -1,44 +1,67 @@
-# Video-UpScaler-AI
+# Video UpScaler AI
 
-On-device AI video enhancement engine for Android. No cloud, no upload — enhancement runs entirely on
-the device.
+On-device video enhancement for Android. No cloud, no upload — frames never leave the device.
 
-**Status: planning.** No implementation exists yet.
+**Honest headline:** this is currently a *Lanczos upscaler with an ESPCN hook wired up and a
+development model attached*. It is not yet a good AI upscaler. See the phase table below.
 
-## Documentation
+## Phase status
 
-- [`docs/PLAN.md`](docs/PLAN.md) — engineering plan (v2, revised). Section 1 records what changed from
-  the original plan and why; §7 is the Phase 0 feasibility gate that must pass before implementation is
-  committed to.
-- [`docs/BUILD_AND_RUN.md`](docs/BUILD_AND_RUN.md) — **how to actually get this onto a device.**
-  Toolchain versions, device setup, the runnable subset, and first-run failures. Read this before
-  touching code.
-- [`docs/DESIGN.md`](docs/DESIGN.md) — app design plan: UX, screens, states, visual system. Read this
-  before writing any UI. §2 covers the preview-vs-export problem that shapes the whole interface.
-- [`docs/plan.json`](docs/plan.json) — the engineering plan in structured form, for tooling and tracking.
+| Phase | Status | Gate |
+|---|---|---|
+| 0 — Feasibility & measurement | ⚠️ **harness built, not run** | Needs real hardware. No latency figure in this repo is a measurement. |
+| 1 — Pipeline & Tiers 0/1 | ✅ implemented | **Never compiled.** No JDK in the sandbox. |
+| 2 — LiteRT effect integration | ⚠️ **code + model complete, unverified** | Quality gate currently FAILS (see below). |
+| 3 — Reliability & long exports | ✅ implemented | Untested. |
+| 4 — Quality & UX | ⚠️ partial | Compare slider built but not wired to a result screen. |
+| 5 — Hardening & release | ❌ | Needs the device matrix. |
+| 6 — Zero-copy NDK | ❌ deliberately not started | PLAN.md defers it pending Phase 0/2 evidence. |
 
-## Current state
+**The two numbers that matter:**
 
-**Phase 1 is implemented but has never been compiled.** The app can pick a video via SAF, preview it
-through the effect chain, and export it upscaled with audio intact. UI is Jetpack Compose / Material 3.
+- Nothing here has ever been compiled. There is no JDK, Gradle, or Android SDK in the environment
+  where this was written.
+- The bundled model was trained on **synthetic images** and currently scores *below* the bicubic
+  reference on the quality gate. It exists to make the Phase 2 plumbing testable, not to ship.
+  `MODEL_CARD.md` has the details and the command to train a real one.
 
-- `pipeline/UpscaleChain.kt` — the shared effect chain (Tier 0: Lanczos resample)
-- `pipeline/VideoExporter.kt` — Transformer export with progress, cancel, storage pre-flight
-- `ui/EnhanceScreen.kt`, `ui/EnhanceViewModel.kt`, `ui/theme/Theme.kt` — Compose UI
-- `UpScalerApp.kt` — process-scoped exporter so rotation does not cancel a running export
+## Layout
 
-Still missing: CI is not enabled (the GitHub App token lacks the `workflows` permission), so the build
-has never run. And there is no `.tflite` model, so the AI tiers do not exist yet — this is a Lanczos
-upscaler, not an AI one. `docs/BUILD_AND_RUN.md` §0 has the full inventory.
+```
+app/src/main/java/com/videoupscaler/ai/
+  MainActivity.kt                Compose host + SAF picker
+  UpScalerApp.kt                 process-scoped exporter
+  ai/UpscaleEngine.kt            LiteRT interpreter, GPU delegate + CPU fallback
+  ai/AiUpscaleEffect.kt          GlEffect + the glReadPixels round trip
+  pipeline/UpscaleChain.kt       the one effect list both preview and export use
+  pipeline/VideoExporter.kt      Transformer export, progress, pre-flight
+  service/ExportService.kt       mediaProcessing FGS, 6h budget handling
+  ui/…                           Compose UI, Material 3
 
-## Key constraints worth knowing up front
+models/espcn/espcn.py            ESPCN definition, training, TFLite export
+tools/eval/quality.py            PSNR/SSIM, self-tested, pure numpy
+docs/PLAN.md                     the plan, with corrections
+docs/DESIGN.md                   product and UI design
+docs/BUILD_AND_RUN.md            build, device choice, CI
+```
 
-- Enhancement is a shared list of Media3 `GlEffect` stages: `ExoPlayer.setVideoEffects()` hosts it for
-  real-time preview, `EditedMediaItem.setEffects()` hosts it for offline export. One chain, so preview
-  and export cannot drift visually.
-- Phase 1 inference crosses a **two-copy** bridge into the LiteRT GPU delegate. It is not zero-copy.
-  True zero-copy (LiteRT C++ `CompiledModel` + `AHardwareBuffer`) is a deferred Phase 2 objective.
-- Tiers are ordered by *temporal determinism*, not sharpness: GAN super-resolution shimmers when run
-  per frame, so it is opt-in and stabilized rather than the default.
-- Long exports run in a `mediaProcessing` foreground service, which is capped at 6 hours per 24-hour
-  period. Checkpoint and resume are requirements, not features.
+## The load-bearing design decision
+
+`pipeline/UpscaleChain.kt` builds **one** effect list, and both hosts consume it —
+`ExoPlayer.setVideoEffects` for preview, `EditedMediaItem.setEffects` for export. That is the only
+reason the preview cannot silently disagree with the export. Any change that gives the two hosts
+separate lists reintroduces the bug `docs/DESIGN.md` §2 exists to prevent.
+
+## Building
+
+CI is **not enabled** — the GitHub App token lacks the `workflows` permission. Copy
+`docs/ci-workflow.yml` to `.github/workflows/android.yml` yourself; the exact commands are in
+`docs/BUILD_AND_RUN.md`.
+
+## Tooling
+
+```bash
+pip install -r tools/requirements.txt
+python3 tools/eval/quality.py                      # self-test the metrics
+python3 models/espcn/espcn.py eval --model models/espcn/espcn_x2.tflite
+```
