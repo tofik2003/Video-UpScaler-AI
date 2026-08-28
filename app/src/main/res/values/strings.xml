@@ -5,6 +5,8 @@
     <string name="action_pick_video">Choose a video</string>
     <string name="action_enhance">Enhance video</string>
 
+    <string name="label_resolution">Resolution</string>
+
     <!-- DESIGN.md 10: state what happened, not what the system did. -->
     <string name="status_no_video">Choose a video to begin</string>
     <string name="status_loaded">Ready</string>
@@ -12,4 +14,10 @@
     <string name="status_done">Saved to %1$s</string>
     <string name="status_failed">Enhancing failed: %1$s</string>
     <string name="status_cancelled">Cancelled</string>
+    <string name="status_notice">%1$s</string>
+
+    <!-- DESIGN.md 10: constraints get reasons, never bare error codes. -->
+    <string name="error_storage">Needs about %1$s free; only %2$s available.</string>
+    <string name="error_playback">This video could not be played (%1$s).</string>
+    <string name="notice_fallback">Adjusted output to fit this device.</string>
 </resources>
