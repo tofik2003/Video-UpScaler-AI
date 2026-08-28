@@ -79,9 +79,16 @@ fun EnhanceScreen(viewModel: EnhanceViewModel, onPickVideo: () -> Unit) {
 
     // Re-applies when the target or the comparison toggle changes. Without this the preview keeps
     // the old chain while the export uses the new one.
-    LaunchedEffect(player, viewModel.showEnhanced, viewModel.target) {
+    // viewModel.tier must be both a key and an argument. Omitting it from the call silently
+    // defaults to SMOOTH, so the preview shows Smooth while the export uses the selected tier —
+    // exactly the preview/export divergence DESIGN.md 2 exists to prevent.
+    LaunchedEffect(player, viewModel.showEnhanced, viewModel.target, viewModel.tier) {
         player?.setVideoEffects(
-            if (viewModel.showEnhanced) UpscaleChain.build(viewModel.target) else emptyList()
+            if (viewModel.showEnhanced) {
+                UpscaleChain.build(viewModel.target, viewModel.tier)
+            } else {
+                emptyList()
+            }
         )
     }
 
