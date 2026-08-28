@@ -7,23 +7,37 @@ date; re-check them before you start, because the Android toolchain moves every 
 
 ## 0. Read this first — what actually exists
 
-The repository currently contains **three Markdown files and no application code**:
+The repository now contains a **Phase 1 skeleton project**, but it is unverified and incomplete:
 
 ```
-README.md
-docs/PLAN.md
-docs/plan.json
-docs/BUILD_AND_RUN.md
+build.gradle.kts                                  AGP 9.3.2
+settings.gradle.kts
+gradle.properties
+app/build.gradle.kts                              compileSdk 36, minSdk 24, Media3 + LiteRT
+app/src/main/AndroidManifest.xml
+app/src/main/java/com/videoupscaler/ai/MainActivity.kt
+app/src/main/res/values/strings.xml
+docs/ci-workflow.yml                              copy to .github/workflows/ to enable CI
+docs/PLAN.md, docs/plan.json, docs/BUILD_AND_RUN.md
 ```
 
-There is no Gradle project, no manifest, no Kotlin source, and no `.tflite` model. So "run the app on a
-device" is not one step — it is three, and only the first two are possible today:
+What is missing, and why it matters:
+
+| Piece | Status |
+|---|---|
+| Gradle **wrapper** (`gradlew`, `gradle-wrapper.jar`) | ❌ absent — the jar is binary and cannot be authored here. CI uses the runner's system Gradle; locally, run `gradle wrapper` once. |
+| `.github/workflows/android.yml` | ❌ absent — the push was rejected (see §2a). Definition is in `docs/ci-workflow.yml`. |
+| **Compilation verified?** | ❌ **No.** Never compiled. See §5. |
+| Effect chain, export, SAF picker | ❌ not written |
+| `.tflite` model | ❌ does not exist anywhere |
+
+So "run the app on a device" is three steps, and only the first two are possible today:
 
 | Step | Possible today? | Why |
 |---|---|---|
 | 1. Toolchain + device setup | ✅ yes | Standard Android setup |
-| 2. Phase 1 skeleton: pick a video, upscale with Lanczos + sharpen, export with audio | ✅ yes | Needs no ML model — pure OpenGL/Media3 |
-| 3. Phase 2: real AI upscaling | ❌ **not yet** | **There is no trained model.** No `.tflite` file exists in this repo, and none is downloadable from it. |
+| 2. Build the skeleton; then add Lanczos + sharpen and export with audio | ⚠️ yes, **after** a first successful compile | Needs no ML model — pure OpenGL/Media3 |
+| 3. Phase 2: real AI upscaling | ❌ **not yet** | **There is no trained model.** No `.tflite` exists in this repo. |
 
 Step 3 is the one people underestimate. It is not "add a dependency" — it is a training and conversion
 pipeline (§6). Plan for it as its own workstream.
@@ -60,6 +74,88 @@ submissions must target 36+. Irrelevant for local testing, relevant the moment y
 
 ---
 
+## 1a. Building in GitHub Actions instead of locally
+
+**Yes, this works, and it is the right choice if you have no local toolchain.** GitHub's
+`ubuntu-latest` runner (Ubuntu 24.04, image `20260823.283.1`, verified 2026-08-28) pre-installs exactly
+what this project needs:
+
+| Pre-installed | Version | Needed for |
+|---|---|---|
+| Java | **17.0.20 (default)**, 21, 25 | AGP 9 requires 17+ |
+| Gradle | **9.7.1** | AGP 9.3.2 needs ≥ 9.5.0 ✅ |
+| Android build-tools | **36.0.0**, 36.1.0, 37.0.0, 35.x, 34.0.0 | `compileSdk 36` ✅ |
+| Android platforms | **android-36**, 36.1, 37.0, 37.1, 35, 34 | ✅ |
+| Platform-tools (`adb`) | 37.0.1 | ✅ |
+| NDK | 27.3 (default), 28.2, 29.0 | Phase 2 zero-copy path |
+| CMake | 3.31.5, 4.1.2 | Phase 2 |
+| `ANDROID_HOME` | `/usr/local/lib/android/sdk` | set as an env var already |
+
+No `setup-android` step is required, and no wrapper is needed — call the system `gradle` directly.
+The workflow in `docs/ci-workflow.yml` does exactly this.
+
+### Getting from a CI artifact to your phone
+
+```bash
+# download the APK that CI uploaded
+gh run download <run-id> --name app-debug-apk --dir ./apk
+adb install -r ./apk/app-debug.apk
+```
+
+Or use the Actions web UI → run → **app-debug-apk** artifact.
+
+### Three things CI cannot do for this project
+
+1. **It cannot verify quality or performance.** The runner is an Azure VM with a virtualised GPU. It will
+   compile the LiteRT GPU delegate happily and tell you nothing about real inference speed. Phase 0
+   measurements (`PLAN.md` §7) still need a physical phone.
+2. **It cannot run an emulator usefully.** `ubuntu-latest` has `xvfb` and emulators can be started
+   (`reactivecircus/android-emulator-runner`), but without KVM it is slow, and the GPU delegate still
+   won't behave like a real Adreno/Mali. Worth it for instrumentation tests, not for this.
+3. **It cannot prove the AI path works** — there is no model to load (§6).
+
+### The permission problem you will hit
+
+The workflow file **cannot be committed from this environment**. The push was rejected with:
+
+```
+remote: refusing to allow a GitHub App to create or update workflow
+        `.github/workflows/android.yml` without `workflows` permission
+```
+
+The GitHub App token used here lacks the `workflows` scope. That is why the definition lives at
+`docs/ci-workflow.yml`. **You** need to move it into place with your own credentials:
+
+```bash
+mkdir -p .github/workflows
+cp docs/ci-workflow.yml .github/workflows/android.yml
+git add .github/workflows/android.yml
+git commit -m "ci: add Android build"
+git push
+```
+
+The file has a header comment with these instructions. Once committed, it runs on every push and PR.
+
+### Consequence: nothing here has been compiled
+
+Because the workflow could not be committed, **no CI run has ever executed on this repository** —
+verified with `gh run list`, which returns empty. So the skeleton in `app/` is unverified. The first
+push that installs the workflow *is* the first compile, and it may well fail on something small (a DSL
+method name, a Kotlin/Java target mismatch). That is expected; fix forward.
+
+The highest-risk items in the skeleton, ranked:
+
+1. **AGP 9 built-in Kotlin vs. `compileOptions`** — if Kotlin's `jvmTarget` disagrees with Java 17 you
+   get "Inconsistent JVM-target compatibility". Fix: add a `kotlin { compilerOptions { ... } }` block,
+   or drop `compileOptions` and let AGP default.
+2. **AGP 9.3.2 with Gradle 9.7.1** — above AGP's stated minimum (9.5.0) and untested by me. If it
+   complains, pin Gradle via `gradle/actions/setup-gradle` or step AGP to 9.2.1.
+3. **`androidResources { noCompress += "tflite" }`** — DSL shape moved between AGP versions. If it
+   errors, delete the block; it only matters once a model exists.
+4. **`@OptIn(UnstableApi::class)` on `PlayerView`** — needed or the build fails on the unstable-API lint.
+
+---
+
 ## 2. Choosing a device — this matters more than it looks
 
 | | Emulator (AVD) | Physical device |
@@ -91,18 +187,13 @@ Wireless is also fine: **Developer options → Wireless debugging → Pair devic
 
 ---
 
-## 3. Creating the project
+## 3. The project
 
-Fastest correct path — let Android Studio generate the skeleton, then edit:
+A skeleton already exists in this repo (`build.gradle.kts`, `settings.gradle.kts`,
+`app/build.gradle.kts`, manifest, `MainActivity.kt`). Open the repo root in Android Studio and let it
+sync — **that sync is the first real check that the build files are valid.**
 
-1. Android Studio → **New Project → Empty Activity** (the Compose template).
-2. Name `Video UpScaler AI`, package `com.videoupscaler.ai`, language **Kotlin**, build configuration
-   **Kotlin DSL**.
-3. Minimum SDK: **API 24** to start. (LiteRT's Interpreter line supports 21; the zero-copy CompiledModel
-   path later needs 23+. 24 is a sensible floor and covers ~99% of active devices.)
-4. Let it finish the first Gradle sync.
-
-Then replace the generated `app/build.gradle.kts` dependencies with:
+The dependency block that matters:
 
 ```kotlin
 android {
@@ -214,28 +305,36 @@ pipeline — decode → effect chain → encode → mux, with audio.
 
 ---
 
-## 5. Verification — and why I could not run it here
+## 5. Verification — what has and has not been proven
 
-**I did not compile or run any of this.** This sandbox has no JDK, no Android SDK, and no outbound
-network (verified: DNS resolves but every HTTPS connection returns `000`, and `apt` cannot reach its
-sources). There is no way for me to execute `./gradlew` here.
+**Nothing in this repository has been compiled or executed.** Two independent blockers, both verified:
 
-So the code in §3–§4 and in `PLAN.md` §6 is **design, checked against API documentation, not compiled**.
-The checks I *did* run:
+1. **This sandbox cannot build.** No JDK exists anywhere on the filesystem, no Android SDK, and bash has
+   no outbound network — DNS resolves `dl.google.com` but every HTTPS request returns `000`, and
+   `apt-get install openjdk-17-jdk-headless` fails with *"Unable to locate package"* against empty lists.
+2. **CI could not be enabled either.** `gh` is installed and authenticated, and the intent was to push
+   the workflow and let GitHub compile the code. The push was **rejected** because the GitHub App token
+   lacks the `workflows` scope. `gh run list` confirms zero runs have ever happened on this repo.
 
-- Verified `plan.json` parses and its structure is consistent.
-- Verified every arithmetic claim in the plan by computation.
-- Verified API signatures against the androidx/LiteRT reference pages — which caught a real error I had
-  written in `PLAN.md` §6.1 (`BaseGlShaderProgram` does not take a `Context`, and the per-frame hook is
-  `drawFrame(int, long)`, not a `queueInputFrame` with a `GlTextureProducer`). That is now corrected.
+So: version numbers and API signatures are verified against vendor sources; **the build itself is not**.
 
-Run these locally; they are the real gate:
+The checks that *were* run:
+
+- `plan.json` parses and its structure is internally consistent.
+- Every arithmetic claim in the plan recomputed.
+- Media3 API signatures checked against the reference — which caught a real error I had written in
+  `PLAN.md` §6.1 (`BaseGlShaderProgram` takes no `Context`; the per-frame hook is
+  `drawFrame(int, long)`). Corrected.
+- AGP version confirmed as `9.3.2` from Google's Maven metadata, not guessed.
+- Runner image contents read from the published `Ubuntu2404-Readme.md`.
+
+The first compile is the gate. Enable the workflow (§1a), or run locally:
 
 ```bash
-./gradlew :app:assembleDebug        # does it compile
-./gradlew :app:lintDebug            # catches manifest/permission mistakes
-./gradlew :app:testDebugUnitTest    # unit tests
-./gradlew :app:installDebug         # gets it onto the phone
+gradle wrapper --gradle-version 9.7.1   # once, to create ./gradlew
+./gradlew :app:assembleDebug            # does it compile
+./gradlew :app:lintDebug                # catches manifest/permission mistakes
+./gradlew :app:installDebug             # gets it onto the phone
 ```
 
 ---
@@ -279,12 +378,16 @@ the right thing to ship first — but do not describe it as AI.
 
 ## 8. Suggested order
 
-1. Set up toolchain + one physical device; confirm `adb devices` sees it.
-2. Generate the project, sync, run the empty template. **Proves the toolchain before you add anything.**
-3. Add Media3, wire SAF → ExoPlayer preview. **Proves you can read a video.**
-4. Add `LanczosResample` + a CAS shader effect; see it change in preview. **Proves the effect seam works.**
-5. Add Transformer export with audio; check the output plays and is in sync. **Proves the pipeline end to end.**
-6. Only now: start the model pipeline (§6).
-7. Then Phase 0 measurement (`PLAN.md` §7) on real hardware, before committing to the AI architecture.
+1. **Enable CI** — copy `docs/ci-workflow.yml` to `.github/workflows/android.yml` and push (§1a).
+   The first run either produces an APK artifact or gives you a precise compile error. Do this before
+   anything else; it is the only way to learn whether the skeleton is valid.
+2. **Get one physical device recognised** — `adb devices` should list it as `device`.
+3. **Install the CI APK on the phone** (`gh run download` → `adb install`). **Proves the whole
+   build-to-device path end to end, before you add a single feature.**
+4. Add the SAF picker and ExoPlayer preview. **Proves you can read a video.**
+5. Add `LanczosResample` + a CAS shader effect; see it change in preview. **Proves the effect seam works.**
+6. Add Transformer export with audio; check the output plays and is in sync. **Proves the pipeline.**
+7. Only now: start the model pipeline (§6).
+8. Then Phase 0 measurement (`PLAN.md` §7) on real hardware, before committing to the AI architecture.
 
-Each step isolates one thing. Steps 2–5 are days; step 6 is weeks.
+Each step isolates one thing. Steps 1–6 are days; step 7 is weeks.
