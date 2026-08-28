@@ -301,49 +301,68 @@ class AiUpscaleEffect(
     private val scale: Int,                 // 2 or 3 — integer only
     private val blend: Float,               // 0.0 = passthrough, 1.0 = full AI
 ) : GlEffect {
-    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
-        AiUpscaleGlShaderProgram(context, /* useHdr */ useHdr, modelAsset, scale, blend)
+    // This IS the correct signature: toGlShaderProgram(Context, boolean useHdr).
+    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram {
+        // Create the engine here, on the GL thread Media3 calls this from, so the
+        // LiteRT delegate is bound to the right thread and EGLContext (see §6.3).
+        val engine = SrEngine.create(context.assets, modelAsset)
+        return AiUpscaleGlShaderProgram(useHdr, engine, scale, blend)
+    }
 }
 ```
 
 ```kotlin
 class AiUpscaleGlShaderProgram(
-    context: Context,
     useHdr: Boolean,
-    modelAsset: String,
+    private val engine: SrEngine,
     private val scale: Int,
     private val blend: Float,
-) : BaseGlShaderProgram(context, useHdr, /* handlingInputTimeStampOffset= */ true) {
-
-    // Created and used on THIS thread only — the GL thread Media3 gives us.
-    // LiteRT GPU delegate throws if invoked from a different thread than it was created on,
-    // and requires the calling thread to hold the current EGLContext. Both hold here.
-    private val engine = SrEngine.create(context.assets, modelAsset)
-
-    private val readback = ByteBuffer.allocateDirect(0)  // resized on first frame
-
-    override fun configure(inputWidth: Int, inputHeight: Int): Pair<Int, Int> =
-        inputWidth * scale to inputHeight * scale        // Media3 allocates the output surface
-
-    override fun queueInputFrame(
-        inputTexture: GlTextureProducer,
-        releaseCallback: GlTextureProducer.Listener.Releasable,
-        presentationTimeUs: Long,
+) : BaseGlShaderProgram(
+        // Real signature: BaseGlShaderProgram(boolean useHighPrecisionColorComponents, int texturePoolCapacity)
+        /* useHighPrecisionColorComponents = */ useHdr,
+        /* texturePoolCapacity = */ 2,
     ) {
+
+    private var inputW = 0
+    private var inputH = 0
+    private var readback: ByteBuffer = ByteBuffer.allocateDirect(0)
+
+    // Called before the first frame of a given input size. Returns the OUTPUT size.
+    override fun configure(inputWidth: Int, inputHeight: Int): Size {
+        inputW = inputWidth; inputH = inputHeight
+        ensureReadback(inputWidth, inputHeight)
+        return Size(inputWidth * scale, inputHeight * scale)
+    }
+
+    // Called on Media3's GL thread with the input texture already bound.
+    // Synchronous by contract — if inference is async, override queueInputFrame
+    // (GlObjectsProvider, GlTextureInfo, long) instead and drive outputListener yourself.
+    override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
         // HONEST PATH: two copies. This is NOT zero-copy.
-        val w = inputTexture.width; val h = inputTexture.height
-        ensureReadback(w, h)
-        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, readback)   // copy 1: GPU -> CPU
-        val out = engine.run(readback, w, h)                            // delegate: CPU -> GPU -> CPU
-        uploadAndComposite(out, blend)                                  // copy 2: CPU -> GPU
-        releaseCallback.onRelease(presentationTimeUs)
+        glReadPixels(0, 0, inputW, inputH, GL_RGBA, GL_UNSIGNED_BYTE, readback)  // copy 1: GPU -> CPU
+        val out = engine.run(readback, inputW, inputH)                            // CPU -> GPU -> CPU
+        val outTex = uploadToPooledTexture(out)                                   // copy 2: CPU -> GPU
+        composite(outTex, blend)                                                  // residual against base
+        outputListener.onOutputFrameAvailable(outTex, presentationTimeUs)
     }
 
     override fun release() { engine.close(); super.release() }
 }
 ```
 
-The v1 version of this class passed `HardwareBuffer` objects into
+Verified against the Media3 API reference (2026-08-28). Two things an earlier draft of this plan got
+wrong and that are worth knowing before you write this class:
+
+- `BaseGlShaderProgram`'s constructor is `(boolean useHighPrecisionColorComponents, int texturePoolCapacity)`.
+  It does **not** take a `Context` or a `useHdr` flag — you derive `useHighPrecisionColorComponents` from
+  `useHdr` yourself.
+- The per-frame hook is `drawFrame(int inputTexId, long presentationTimeUs)`, and `configure(int, int)`
+  returns `android.util.Size`, not a `Pair`. `queueInputFrame` takes
+  `(GlObjectsProvider, GlTextureInfo, long)` and is the hook to override only for *asynchronous* work.
+- `GlTextureProducer` exposes a single method, `releaseOutputTexture(long)`. There is no `width`/`height`
+  on it and no `Listener.Releasable`.
+
+The v1 plan's version of this class passed `HardwareBuffer` objects into
 `interpreter.runForMultipleInputsOutputs` — which accepts only arrays and `java.nio.Buffer`.
 
 ### 6.2 Wiring the chain into both hosts

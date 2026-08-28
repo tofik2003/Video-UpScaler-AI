@@ -7,10 +7,19 @@ the device.
 
 ## Documentation
 
-- [`docs/PLAN.md`](docs/PLAN.md) — engineering plan (v2, revised). Start here. Section 1 records what
-  changed from the original plan and why; §7 is the Phase 0 feasibility gate that must pass before
-  implementation is committed to.
+- [`docs/PLAN.md`](docs/PLAN.md) — engineering plan (v2, revised). Section 1 records what changed from
+  the original plan and why; §7 is the Phase 0 feasibility gate that must pass before implementation is
+  committed to.
+- [`docs/BUILD_AND_RUN.md`](docs/BUILD_AND_RUN.md) — **how to actually get this onto a device.**
+  Toolchain versions, device setup, the runnable subset, and first-run failures. Read this before
+  touching code.
 - [`docs/plan.json`](docs/plan.json) — the same plan in structured form, for tooling and tracking.
+
+## Current state
+
+There is **no application code yet** — no Gradle project, no manifest, no Kotlin, no `.tflite` model.
+`BUILD_AND_RUN.md` §0 lays out which parts are runnable today (the Lanczos/sharpen path, which needs no
+model) and which are not (real AI upscaling, which needs a trained model that does not yet exist).
 
 ## Key constraints worth knowing up front
 
