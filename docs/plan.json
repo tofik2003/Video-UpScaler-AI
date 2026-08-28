@@ -296,9 +296,13 @@
       "drawFrame": "abstract void drawFrame(int inputTexId, long presentationTimeUs) - the synchronous per-frame hook",
       "queueInputFrame": "void queueInputFrame(GlObjectsProvider glObjectsProvider, GlTextureInfo inputTexture, long presentationTimeUs) - override only for asynchronous work",
       "GlTextureProducer": "exposes only releaseOutputTexture(long presentationTimeUs); has no width/height and no Listener.Releasable",
-      "output_signal": "outputListener.onOutputFrameAvailable(GlTextureInfo, long presentationTimeUs); owner must return it via releaseOutputFrame(GlTextureInfo)"
+      "output_signal": "outputListener.onOutputFrameAvailable(GlTextureInfo, long presentationTimeUs); owner must return it via releaseOutputFrame(GlTextureInfo)",
+      "LanczosResample": "NO public constructor. Created only via the static factories scaleToFit(int width, int height) and scaleToFitWithFlexibleOrientation(int firstDimension, int secondDimension). Use the flexible-orientation form so portrait video upscales to 1080x1920 instead of being letterboxed.",
+      "Transformer.Listener": "onCompleted(Composition, ExportResult), onError(Composition, ExportResult, ExportException), onFallbackApplied(Composition, TransformationRequest, TransformationRequest) - all default methods.",
+      "ExportException": "public final int errorCode is a FIELD; the error NAME is a method getErrorCodeName(), not a field.",
+      "ProgressHolder": "public @IntRange(0,100) int progress is a FIELD. Poll Transformer.getProgress(ProgressHolder); it returns a @Transformer.ProgressState int."
     },
-    "export_wiring": "val chain = listOf(\n    LanczosResample(targetWidth, targetHeight),\n    AiUpscaleEffect(model, scale = 2, blend = 0.7f),\n    TemporalStabilizeEffect(strength = 0.3f),\n    CasSharpenEffect(amount = 0.35f),\n)\n\n// Preview\nexoPlayer.setVideoEffects(chain.filter { it.isRealtimeSafe })\n\n// Export. NOTE: Transformer.Builder.setVideoEffects() was REMOVED in Media3 1.6.0.\nval edited = EditedMediaItem.Builder(MediaItem.fromUri(inputUri))\n    .setEffects(Effects(/* audioProcessors = */ emptyList(), /* videoEffects = */ chain))\n    .build()\n\nTransformer.Builder(context)\n    .setVideoMimeType(MimeTypes.VIDEO_H265)\n    .setAudioMimeType(MimeTypes.AUDIO_AAC)   // audio is preserved; v1 never mentioned it\n    .setHdrMode(HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)\n    .addListener(exportListener)\n    .build()\n    .start(edited, outputPath)",
+    "export_wiring": "val chain = listOf(\n    // LanczosResample has NO public constructor - static factory only.\n    LanczosResample.scaleToFitWithFlexibleOrientation(targetLong, targetShort),\n    AiUpscaleEffect(model, scale = 2, blend = 0.7f),\n    TemporalStabilizeEffect(strength = 0.3f),\n    CasSharpenEffect(amount = 0.35f),\n)\n\n// Preview\nexoPlayer.setVideoEffects(chain.filter { it.isRealtimeSafe })\n\n// Export. NOTE: Transformer.Builder.setVideoEffects() was REMOVED in Media3 1.6.0.\nval edited = EditedMediaItem.Builder(MediaItem.fromUri(inputUri))\n    .setEffects(Effects(/* audioProcessors = */ emptyList(), /* videoEffects = */ chain))\n    .build()\n\nTransformer.Builder(context)\n    .setVideoMimeType(MimeTypes.VIDEO_H265)\n    .setAudioMimeType(MimeTypes.AUDIO_AAC)   // audio is preserved; v1 never mentioned it\n    .setHdrMode(HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)\n    .addListener(exportListener)\n    .build()\n    .start(edited, outputPath)",
     "threading_rules": [
       "Create the interpreter on the GL thread and invoke it only from that thread; the LiteRT GPU delegate throws 'GpuDelegate must run on the same thread where it was initialized' otherwise.",
       "The EGLContext must be current on the invoking thread for the delegate's GL path; BaseGlShaderProgram.queueInputFrame already satisfies this.",
@@ -314,26 +318,101 @@
   },
   "risk_mitigation": {
     "register": [
-      { "id": "R1", "risk": "In-pipeline inference too slow due to two-copy overhead", "severity": "critical", "mitigation": "Phase 0 gate; ship Tiers 0/1 if it fails; zero-copy only if justified by measurement" },
-      { "id": "R2", "risk": "Temporal flicker from GAN super-resolution", "severity": "critical", "mitigation": "Tier 3 opt-in; temporal stabilizer; tiers ordered by determinism" },
-      { "id": "R3", "risk": "6h/24h foreground service budget exhausted mid-export", "severity": "high", "mitigation": "Implement onTimeout(); track the budget; fragmented MP4 checkpoint and resume" },
-      { "id": "R4", "risk": "GPU OOM from large intermediate textures", "severity": "high", "mitigation": "Cap target resolution by RAM class; reuse textures; 4x removed from v1" },
-      { "id": "R5", "risk": "Thermal throttling after several minutes of full GPU load", "severity": "high", "mitigation": "Phase 0 sustained-thermal test; adaptive tier downgrade under thermal pressure" },
-      { "id": "R6", "risk": "Colour or range shift (BT.601 vs BT.709, limited vs full range)", "severity": "high", "mitigation": "Explicit colour handling in the effect chain plus a colour-accuracy clip in the harness" },
-      { "id": "R7", "risk": "Delegate initialisation throws on specific GPU drivers", "severity": "high", "mitigation": "CompatibilityList plus a catch-all fallback to Tier 1, per device" },
-      { "id": "R8", "risk": "Model weight or training-dataset licensing blocks shipping", "severity": "high", "mitigation": "Verify per model before bundling; prefer self-trained weights; record provenance in MODEL_CARD.md" },
-      { "id": "R9", "risk": "Temp storage exhaustion from multi-GB intermediates", "severity": "medium", "mitigation": "Pre-flight free-space check; stream instead of buffering; clean up on cancel" },
-      { "id": "R10", "risk": "HDR input mishandled", "severity": "medium", "mitigation": "Tone-map to SDR via Media3; HDR output out of scope for v1" },
-      { "id": "R11", "risk": "A/V desync at any boundary", "severity": "medium", "mitigation": "No encode chunking (v1 pillar 3 demoted); A/V sync test in the harness" },
-      { "id": "R12", "risk": "Play policy on background processing and storage permissions", "severity": "medium", "mitigation": "SAF-only file access; mediaProcessing service type; no MANAGE_EXTERNAL_STORAGE" }
+      {
+        "id": "R1",
+        "risk": "In-pipeline inference too slow due to two-copy overhead",
+        "severity": "critical",
+        "mitigation": "Phase 0 gate; ship Tiers 0/1 if it fails; zero-copy only if justified by measurement"
+      },
+      {
+        "id": "R2",
+        "risk": "Temporal flicker from GAN super-resolution",
+        "severity": "critical",
+        "mitigation": "Tier 3 opt-in; temporal stabilizer; tiers ordered by determinism"
+      },
+      {
+        "id": "R3",
+        "risk": "6h/24h foreground service budget exhausted mid-export",
+        "severity": "high",
+        "mitigation": "Implement onTimeout(); track the budget; fragmented MP4 checkpoint and resume"
+      },
+      {
+        "id": "R4",
+        "risk": "GPU OOM from large intermediate textures",
+        "severity": "high",
+        "mitigation": "Cap target resolution by RAM class; reuse textures; 4x removed from v1"
+      },
+      {
+        "id": "R5",
+        "risk": "Thermal throttling after several minutes of full GPU load",
+        "severity": "high",
+        "mitigation": "Phase 0 sustained-thermal test; adaptive tier downgrade under thermal pressure"
+      },
+      {
+        "id": "R6",
+        "risk": "Colour or range shift (BT.601 vs BT.709, limited vs full range)",
+        "severity": "high",
+        "mitigation": "Explicit colour handling in the effect chain plus a colour-accuracy clip in the harness"
+      },
+      {
+        "id": "R7",
+        "risk": "Delegate initialisation throws on specific GPU drivers",
+        "severity": "high",
+        "mitigation": "CompatibilityList plus a catch-all fallback to Tier 1, per device"
+      },
+      {
+        "id": "R8",
+        "risk": "Model weight or training-dataset licensing blocks shipping",
+        "severity": "high",
+        "mitigation": "Verify per model before bundling; prefer self-trained weights; record provenance in MODEL_CARD.md"
+      },
+      {
+        "id": "R9",
+        "risk": "Temp storage exhaustion from multi-GB intermediates",
+        "severity": "medium",
+        "mitigation": "Pre-flight free-space check; stream instead of buffering; clean up on cancel"
+      },
+      {
+        "id": "R10",
+        "risk": "HDR input mishandled",
+        "severity": "medium",
+        "mitigation": "Tone-map to SDR via Media3; HDR output out of scope for v1"
+      },
+      {
+        "id": "R11",
+        "risk": "A/V desync at any boundary",
+        "severity": "medium",
+        "mitigation": "No encode chunking (v1 pillar 3 demoted); A/V sync test in the harness"
+      },
+      {
+        "id": "R12",
+        "risk": "Play policy on background processing and storage permissions",
+        "severity": "medium",
+        "mitigation": "SAF-only file access; mediaProcessing service type; no MANAGE_EXTERNAL_STORAGE"
+      }
     ],
     "superseded_v1_note": "v1's only risk was LMK termination above a RAM threshold. A mediaProcessing foreground service is largely protected from LMK, so that framing understated the real failure modes."
   },
   "licensing": {
     "assets": [
-      { "asset": "AMD FSR 1.0 (EASU/RCAS)", "code_license": "MIT (confirmed, GPUOpen)", "weights": "n/a (algorithm)", "status": "clear to port; retain the notice" },
-      { "asset": "Fast-SRGAN", "code_license": "MIT (confirmed, HasnainRaz/Fast-SRGAN)", "weights": "unverified", "status": "verify the released checkpoint and its training set before bundling" },
-      { "asset": "ESPCN", "code_license": "implementations MIT; paper code varies", "weights": "unverified", "status": "prefer training your own on a permissively licensed corpus" }
+      {
+        "asset": "AMD FSR 1.0 (EASU/RCAS)",
+        "code_license": "MIT (confirmed, GPUOpen)",
+        "weights": "n/a (algorithm)",
+        "status": "clear to port; retain the notice"
+      },
+      {
+        "asset": "Fast-SRGAN",
+        "code_license": "MIT (confirmed, HasnainRaz/Fast-SRGAN)",
+        "weights": "unverified",
+        "status": "verify the released checkpoint and its training set before bundling"
+      },
+      {
+        "asset": "ESPCN",
+        "code_license": "implementations MIT; paper code varies",
+        "weights": "unverified",
+        "status": "prefer training your own on a permissively licensed corpus"
+      }
     ],
     "recommendation": "Train ESPCN in-house and ship your own FP16 weights. It removes the licensing question, costs little (ESPCN trains in hours), and yields a model tuned to real phone video rather than DIV2K crops. Check DIV800/DIV2K-Flickr2K licensing per use if those sets are used."
   },

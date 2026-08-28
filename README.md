@@ -19,14 +19,16 @@ the device.
 
 ## Current state
 
-A **Phase 1 skeleton** exists — Gradle build files, manifest, and a `MainActivity` hosting a
-`PlayerView`, with Media3 1.11.0 and LiteRT 1.4.2 declared. It has **never been compiled**: this
-environment has no JDK or Android SDK, and the CI workflow could not be committed because the GitHub
-App token lacks the `workflows` permission.
+**Phase 1 is implemented but has never been compiled.** The app can pick a video via SAF, preview it
+through the effect chain, and export it upscaled with audio intact.
 
-Also missing: the effect chain, the export path, and any `.tflite` model — so the AI upscaling does not
-work yet. `docs/BUILD_AND_RUN.md` §1a explains how to enable CI and get a build; §0 lists exactly what
-is and is not present.
+- `pipeline/UpscaleChain.kt` — the shared effect chain (Tier 0: Lanczos resample)
+- `pipeline/VideoExporter.kt` — Transformer export with progress, cancel, and error reporting
+- `MainActivity.kt` — plain Views UI (Compose is deferred, see `BUILD_AND_RUN.md` §1a)
+
+Still missing: CI is not enabled (the GitHub App token lacks the `workflows` permission), so the build
+has never run. And there is no `.tflite` model, so the AI tiers do not exist yet — this is a Lanczos
+upscaler, not an AI one. `docs/BUILD_AND_RUN.md` §0 has the full inventory.
 
 ## Key constraints worth knowing up front
 

@@ -32,6 +32,9 @@ android {
 }
 
 dependencies {
+    // ComponentActivity + the ActivityResult API, used for the SAF picker.
+    implementation("androidx.activity:activity:1.13.0")
+
     // Media3 — the whole pipeline. media3-effect carries GlEffect / BaseGlShaderProgram /
     // LanczosResample, which is the extension point the architecture rests on.
     val media3 = "1.11.0"

@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Video UpScaler AI</string>
+
+    <string name="action_pick_video">Choose a video</string>
+    <string name="action_enhance">Enhance video</string>
+
+    <!-- DESIGN.md 10: state what happened, not what the system did. -->
+    <string name="status_no_video">Choose a video to begin</string>
+    <string name="status_loaded">Ready</string>
+    <string name="status_exporting">Enhancing… %1$d%%</string>
+    <string name="status_done">Saved to %1$s</string>
+    <string name="status_failed">Enhancing failed: %1$s</string>
+    <string name="status_cancelled">Cancelled</string>
 </resources>

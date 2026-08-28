@@ -369,7 +369,8 @@ The v1 plan's version of this class passed `HardwareBuffer` objects into
 
 ```kotlin
 val chain = listOf(
-    LanczosResample(targetWidth, targetHeight),      // deterministic base
+    // LanczosResample has NO public constructor - static factory only.
+    LanczosResample.scaleToFitWithFlexibleOrientation(targetLong, targetShort),
     AiUpscaleEffect(model, scale = 2, blend = 0.7f), // residual, not replacement
     TemporalStabilizeEffect(strength = 0.3f),
     CasSharpenEffect(amount = 0.35f),

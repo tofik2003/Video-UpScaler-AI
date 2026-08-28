@@ -7,18 +7,20 @@ date; re-check them before you start, because the Android toolchain moves every 
 
 ## 0. Read this first — what actually exists
 
-The repository now contains a **Phase 1 skeleton project**, but it is unverified and incomplete:
+The repository now contains a **Phase 1 implementation**, uncompiled and incomplete:
 
 ```
 build.gradle.kts                                  AGP 9.3.2
 settings.gradle.kts
 gradle.properties
-app/build.gradle.kts                              compileSdk 36, minSdk 24, Media3 + LiteRT
+app/build.gradle.kts                              compileSdk 36, minSdk 24, Media3 + LiteRT + activity
 app/src/main/AndroidManifest.xml
-app/src/main/java/com/videoupscaler/ai/MainActivity.kt
+app/src/main/java/com/videoupscaler/ai/MainActivity.kt          Views UI: pick, preview, export
+app/src/main/java/com/videoupscaler/ai/pipeline/UpscaleChain.kt     shared effect chain (Tier 0)
+app/src/main/java/com/videoupscaler/ai/pipeline/VideoExporter.kt    Transformer export + progress
 app/src/main/res/values/strings.xml
 docs/ci-workflow.yml                              copy to .github/workflows/ to enable CI
-docs/PLAN.md, docs/plan.json, docs/BUILD_AND_RUN.md
+docs/PLAN.md, docs/DESIGN.md, docs/plan.json, docs/BUILD_AND_RUN.md
 ```
 
 What is missing, and why it matters:
@@ -26,17 +28,18 @@ What is missing, and why it matters:
 | Piece | Status |
 |---|---|
 | Gradle **wrapper** (`gradlew`, `gradle-wrapper.jar`) | ❌ absent — the jar is binary and cannot be authored here. CI uses the runner's system Gradle; locally, run `gradle wrapper` once. |
-| `.github/workflows/android.yml` | ❌ absent — the push was rejected (see §2a). Definition is in `docs/ci-workflow.yml`. |
+| `.github/workflows/android.yml` | ❌ absent — the push was rejected (see §1a). Definition is in `docs/ci-workflow.yml`. |
 | **Compilation verified?** | ❌ **No.** Never compiled. See §5. |
-| Effect chain, export, SAF picker | ❌ not written |
-| `.tflite` model | ❌ does not exist anywhere |
+| Compose UI | ❌ deferred — see §1a for why |
+| `.tflite` model | ❌ does not exist anywhere, so there is no AI upscaling |
+| Tests | ❌ none |
 
 So "run the app on a device" is three steps, and only the first two are possible today:
 
 | Step | Possible today? | Why |
 |---|---|---|
-| 1. Toolchain + device setup | ✅ yes | Standard Android setup |
-| 2. Build the skeleton; then add Lanczos + sharpen and export with audio | ⚠️ yes, **after** a first successful compile | Needs no ML model — pure OpenGL/Media3 |
+| 1. Enable CI, get a first compile | ⚠️ needs your credentials | Workflow push is blocked here |
+| 2. Install the APK; pick a video, export it upscaled with audio | ✅ yes, once it compiles | Pure Media3/OpenGL — no ML model needed |
 | 3. Phase 2: real AI upscaling | ❌ **not yet** | **There is no trained model.** No `.tflite` exists in this repo. |
 
 Step 3 is the one people underestimate. It is not "add a dependency" — it is a training and conversion
@@ -276,7 +279,8 @@ pipeline — decode → effect chain → encode → mux, with audio.
 
 3. **Preview** — `ExoPlayer` + `PlayerView`, then:
    ```kotlin
-   player.setVideoEffects(listOf(LanczosResample(1920, 1080), CasSharpenEffect(0.35f)))
+   // LanczosResample has NO public constructor - use the static factory.
+   player.setVideoEffects(listOf(LanczosResample.scaleToFitWithFlexibleOrientation(1920, 1080)))
    ```
 
 4. **Export** — the shape that actually compiles on Media3 1.11:
