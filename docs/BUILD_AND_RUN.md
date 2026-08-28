@@ -10,14 +10,18 @@ date; re-check them before you start, because the Android toolchain moves every 
 The repository now contains a **Phase 1 implementation**, uncompiled and incomplete:
 
 ```
-build.gradle.kts                                  AGP 9.3.2
+build.gradle.kts                                  AGP 9.0.1 + Compose compiler 2.2.10
 settings.gradle.kts
 gradle.properties
 app/build.gradle.kts                              compileSdk 36, minSdk 24, Media3 + LiteRT + activity
 app/src/main/AndroidManifest.xml
-app/src/main/java/com/videoupscaler/ai/MainActivity.kt          Views UI: pick, preview, export
+app/src/main/java/com/videoupscaler/ai/MainActivity.kt              Compose host + SAF picker
+app/src/main/java/com/videoupscaler/ai/UpScalerApp.kt               process-scoped exporter
 app/src/main/java/com/videoupscaler/ai/pipeline/UpscaleChain.kt     shared effect chain (Tier 0)
-app/src/main/java/com/videoupscaler/ai/pipeline/VideoExporter.kt    Transformer export + progress
+app/src/main/java/com/videoupscaler/ai/pipeline/VideoExporter.kt    export + progress + pre-flight
+app/src/main/java/com/videoupscaler/ai/ui/EnhanceScreen.kt          Compose workspace
+app/src/main/java/com/videoupscaler/ai/ui/EnhanceViewModel.kt       state + exporter bridge
+app/src/main/java/com/videoupscaler/ai/ui/theme/Theme.kt            Material 3 theme
 app/src/main/res/values/strings.xml
 docs/ci-workflow.yml                              copy to .github/workflows/ to enable CI
 docs/PLAN.md, docs/DESIGN.md, docs/plan.json, docs/BUILD_AND_RUN.md
@@ -30,7 +34,7 @@ What is missing, and why it matters:
 | Gradle **wrapper** (`gradlew`, `gradle-wrapper.jar`) | ❌ absent — the jar is binary and cannot be authored here. CI uses the runner's system Gradle; locally, run `gradle wrapper` once. |
 | `.github/workflows/android.yml` | ❌ absent — the push was rejected (see §1a). Definition is in `docs/ci-workflow.yml`. |
 | **Compilation verified?** | ❌ **No.** Never compiled. See §5. |
-| Compose UI | ❌ deferred — see §1a for why |
+| Compose UI | ✅ Material 3, dynamic colour, dark default |
 | `.tflite` model | ❌ does not exist anywhere, so there is no AI upscaling |
 | Tests | ❌ none |
 
@@ -54,8 +58,8 @@ Verified versions as of 2026-08-28:
 | Component | Use | Source |
 |---|---|---|
 | Android Studio | **Quail 3 \| 2026.1.3** (current stable) | [releases](https://developer.android.com/studio/releases) |
-| Android Gradle Plugin | **9.2** | [about-agp](https://developer.android.com/build/releases/about-agp) |
-| Gradle | **9.4.1** (AGP 9.2's minimum) | same |
+| Android Gradle Plugin | **9.0.1** | [about-agp](https://developer.android.com/build/releases/about-agp) |
+| Gradle | **9.7.1** (AGP 9.0 needs ≥ 9.1.0) | same |
 | JDK for the build | **17+** (Studio bundles 21) | [AGP 9.0 notes](https://developer.android.com/build/releases/agp-9-0-0-release-notes) |
 | `compileSdk` / `targetSdk` | **36** | see note below |
 | Media3 | **1.11.0** | [releases](https://developer.android.com/jetpack/androidx/releases/media3) |
@@ -86,7 +90,7 @@ what this project needs:
 | Pre-installed | Version | Needed for |
 |---|---|---|
 | Java | **17.0.20 (default)**, 21, 25 | AGP 9 requires 17+ |
-| Gradle | **9.7.1** | AGP 9.3.2 needs ≥ 9.5.0 ✅ |
+| Gradle | **9.7.1** | AGP 9.0.1 needs ≥ 9.1.0 ✅ |
 | Android build-tools | **36.0.0**, 36.1.0, 37.0.0, 35.x, 34.0.0 | `compileSdk 36` ✅ |
 | Android platforms | **android-36**, 36.1, 37.0, 37.1, 35, 34 | ✅ |
 | Platform-tools (`adb`) | 37.0.1 | ✅ |
@@ -151,11 +155,15 @@ The highest-risk items in the skeleton, ranked:
 1. **AGP 9 built-in Kotlin vs. `compileOptions`** — if Kotlin's `jvmTarget` disagrees with Java 17 you
    get "Inconsistent JVM-target compatibility". Fix: add a `kotlin { compilerOptions { ... } }` block,
    or drop `compileOptions` and let AGP default.
-2. **AGP 9.3.2 with Gradle 9.7.1** — above AGP's stated minimum (9.5.0) and untested by me. If it
-   complains, pin Gradle via `gradle/actions/setup-gradle` or step AGP to 9.2.1.
+2. **The Compose/Kotlin/AGP pairing** — the compose-compiler plugin version must equal the Kotlin
+   Gradle Plugin version that AGP bundles. AGP 9.0.1 documents KGP 2.2.10, which is why AGP is
+   pinned there rather than at 9.3.2. See §1a. If this breaks, the error mentions the compose
+   compiler and a Kotlin version, and the fix is to re-pin the plugin to the bundled KGP.
 3. **`androidResources { noCompress += "tflite" }`** — DSL shape moved between AGP versions. If it
    errors, delete the block; it only matters once a model exists.
 4. **`@OptIn(UnstableApi::class)` on `PlayerView`** — needed or the build fails on the unstable-API lint.
+5. **Gradle 9.7.1 vs AGP 9.0.1** — above AGP's stated minimum (9.1.0) and untested by me. If it
+   complains, pin Gradle via `gradle/actions/setup-gradle`.
 
 ---
 
@@ -329,7 +337,8 @@ The checks that *were* run:
 - Media3 API signatures checked against the reference — which caught a real error I had written in
   `PLAN.md` §6.1 (`BaseGlShaderProgram` takes no `Context`; the per-frame hook is
   `drawFrame(int, long)`). Corrected.
-- AGP version confirmed as `9.3.2` from Google's Maven metadata, not guessed.
+- AGP pinned to `9.0.1`, not the latest `9.3.2`, for the documented KGP 2.2.10 pairing (§1a).
+- Every Compose, Material 3, Activity, and Lifecycle coordinate checked against Maven metadata.
 - Runner image contents read from the published `Ubuntu2404-Readme.md`.
 
 The first compile is the gate. Enable the workflow (§1a), or run locally:

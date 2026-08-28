@@ -20,11 +20,12 @@ the device.
 ## Current state
 
 **Phase 1 is implemented but has never been compiled.** The app can pick a video via SAF, preview it
-through the effect chain, and export it upscaled with audio intact.
+through the effect chain, and export it upscaled with audio intact. UI is Jetpack Compose / Material 3.
 
 - `pipeline/UpscaleChain.kt` — the shared effect chain (Tier 0: Lanczos resample)
-- `pipeline/VideoExporter.kt` — Transformer export with progress, cancel, and error reporting
-- `MainActivity.kt` — plain Views UI (Compose is deferred, see `BUILD_AND_RUN.md` §1a)
+- `pipeline/VideoExporter.kt` — Transformer export with progress, cancel, storage pre-flight
+- `ui/EnhanceScreen.kt`, `ui/EnhanceViewModel.kt`, `ui/theme/Theme.kt` — Compose UI
+- `UpScalerApp.kt` — process-scoped exporter so rotation does not cancel a running export
 
 Still missing: CI is not enabled (the GitHub App token lacks the `workflows` permission), so the build
 has never run. And there is no `.tflite` model, so the AI tiers do not exist yet — this is a Lanczos

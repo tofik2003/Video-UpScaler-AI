@@ -4,17 +4,25 @@
 
     <string name="action_pick_video">Choose a video</string>
     <string name="action_enhance">Enhance video</string>
+    <string name="action_cancel">Cancel</string>
 
     <string name="label_resolution">Resolution</string>
+    <string name="label_compare">Compare</string>
+    <string name="label_free_space">%1$s MB free</string>
+
+    <string name="compare_original">Original</string>
+    <string name="compare_enhanced">Enhanced</string>
+
+    <!-- The mode badge says which pipeline is actually on screen. Load-bearing, not decoration. -->
+    <string name="badge_original">Original</string>
+    <string name="badge_enhanced">Enhanced</string>
 
     <!-- DESIGN.md 10: state what happened, not what the system did. -->
     <string name="status_no_video">Choose a video to begin</string>
-    <string name="status_loaded">Ready</string>
     <string name="status_exporting">Enhancing… %1$d%%</string>
     <string name="status_done">Saved to %1$s</string>
     <string name="status_failed">Enhancing failed: %1$s</string>
     <string name="status_cancelled">Cancelled</string>
-    <string name="status_notice">%1$s</string>
 
     <!-- DESIGN.md 10: constraints get reasons, never bare error codes. -->
     <string name="error_storage">Needs about %1$s free; only %2$s available.</string>
