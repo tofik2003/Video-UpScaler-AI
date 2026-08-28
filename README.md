@@ -13,7 +13,9 @@ the device.
 - [`docs/BUILD_AND_RUN.md`](docs/BUILD_AND_RUN.md) — **how to actually get this onto a device.**
   Toolchain versions, device setup, the runnable subset, and first-run failures. Read this before
   touching code.
-- [`docs/plan.json`](docs/plan.json) — the same plan in structured form, for tooling and tracking.
+- [`docs/DESIGN.md`](docs/DESIGN.md) — app design plan: UX, screens, states, visual system. Read this
+  before writing any UI. §2 covers the preview-vs-export problem that shapes the whole interface.
+- [`docs/plan.json`](docs/plan.json) — the engineering plan in structured form, for tooling and tracking.
 
 ## Current state
 
