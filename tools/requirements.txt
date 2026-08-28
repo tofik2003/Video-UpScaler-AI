@@ -1,0 +1,13 @@
+# Tooling for model training and evaluation. Not needed to build or run the app.
+#
+# TensorFlow 2.20 uses Keras 3, which has no DepthToSpace layer — models/espcn/espcn.py uses
+# tf.nn.depth_to_space instead, which converts cleanly to the TFLite DEPTH_TO_SPACE op.
+tensorflow-cpu==2.20.0
+
+# Same runtime Android uses. TF 2.20 deprecates tf.lite.Interpreter in favour of this package, so
+# host-side benchmarks exercise the code path the device will.
+ai-edge-litert
+
+# tools/eval/quality.py is deliberately pure numpy — no scipy, no skimage — so the harness runs
+# anywhere without a heavy install.
+numpy

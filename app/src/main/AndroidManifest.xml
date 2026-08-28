@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- No READ_EXTERNAL_STORAGE / MANAGE_EXTERNAL_STORAGE: file access goes through SAF. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Required from API 34 to start a mediaProcessing foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:name=".UpScalerApp"
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.UpScaler">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING exists from API 29 (Android 10), not 35 —
+             an earlier comment here said otherwise. The typed startForeground overload is used on
+             API 29+ and the untyped one below that; see ExportService.startInForeground(). -->
+        <service
+            android:name=".service.ExportService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProcessing" />
+
+    </application>
+
+</manifest>

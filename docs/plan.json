@@ -1,0 +1,518 @@
+{
+  "project_name": "Video UpScaler AI",
+  "tagline": "On-Device AI Video Enhancement Engine",
+  "plan_revision": {
+    "version": 2,
+    "supersedes": "v1",
+    "revision_date": "2026-08-28",
+    "human_readable_plan": "docs/PLAN.md",
+    "verification_note": "All external claims verified against vendor docs on 2026-08-28. No code in this repository has been compiled or executed; the sandbox has no JDK, Gradle or Android SDK. All latency figures are targets, not measurements."
+  },
+  "architecture_type": "Privacy-First On-Device GPU-Resident Frame Pipeline (Media3 effect chain + LiteRT)",
+  "executive_summary": "Video UpScaler AI enhances local video entirely on device, with no cloud dependency. Frames never become CPU Bitmaps. Enhancement is implemented as a shared list of Media3 GlEffect stages that runs inside a single GL pipeline: ExoPlayer hosts it for real-time preview, Media3 Transformer hosts it for offline export, so preview and export cannot drift visually. Super-resolution runs through the LiteRT GPU delegate (OpenCL). True zero-copy HardwareBuffer interop is a Phase 2 C++ objective using the LiteRT CompiledModel API, not a Kotlin property of Phase 1.",
+  "architecture_pipeline_flow": [
+    "Encoded Input MP4 (via Storage Access Framework)",
+    "Media3 Transformer decoder (hardware)",
+    "Shared GlEffect chain on the GL thread: colour normalisation -> Lanczos base resample -> AiUpscaleGlEffect (LiteRT) -> temporal stabilizer -> CAS sharpen",
+    "Media3 Transformer encoder (H.265/H.264)",
+    "Audio: passthrough or AAC re-encode (preserved, never dropped)",
+    "Fragmented MP4 output (checkpointable, resumable)"
+  ],
+  "preview_path": "ExoPlayer.setVideoEffects(same chain, real-time-safe subset) -> SurfaceView",
+  "corrections_from_v1": [
+    {
+      "id": "C1",
+      "severity": "blocker",
+      "claim_in_v1": "Pass HardwareBuffer directly into interpreter.runForMultipleInputsOutputs for zero-copy GPU execution.",
+      "finding": "Interpreter.runForMultipleInputsOutputs accepts only multidimensional arrays or java.nio.Buffer types (ByteBuffer, FloatBuffer, IntBuffer, LongBuffer). android.hardware.HardwareBuffer is not supported. The v1 blueprint does not work.",
+      "correction": "Phase 1 uses an explicit two-copy path (glReadPixels -> direct ByteBuffer -> delegate -> GL texture). True zero-copy is deferred to Phase 2 via the C++ CompiledModel API (TensorBuffer::CreateFromGlBuffer, kLiteRtTensorBufferTypeAhwb)."
+    },
+    {
+      "id": "C2",
+      "severity": "blocker",
+      "claim_in_v1": "Insert LiteRT inference between MediaCodec decoder and encoder; chunk the video via Media3 Transformer.",
+      "finding": "Transformer exposes no seam for external per-frame processing; it is a closed decode->encode pipeline. Also, Transformer.Builder.setVideoEffects() was removed in Media3 1.6.0.",
+      "correction": "Inference lives inside a custom GlEffect / BaseGlShaderProgram (queueInputFrame), which Media3 documents as the extension point (its own example runs a MediaPipe FrameProcessor there). Effects are attached via EditedMediaItem.Builder.setEffects(Effects(...)) and transformer.start(editedMediaItem, path)."
+    },
+    {
+      "id": "C3",
+      "severity": "blocker",
+      "claim_in_v1": "FastSRGAN (a GAN) as the flagship quality path.",
+      "finding": "GAN super-resolution hallucinates detail from a single frame; run per frame it produces visible temporal shimmering, which requires multi-frame alignment to suppress. No model in the v1 matrix does this.",
+      "correction": "Tiers are ordered by temporal determinism. ESPCN-class (near-deterministic) becomes the default. GAN SR is opt-in, requires a motion-gated temporal stabilizer, and carries a user-facing warning. A new Tier 0 (Media3 built-in LanczosResample + CAS) is the universal, flicker-free floor."
+    },
+    {
+      "id": "C4",
+      "severity": "high",
+      "claim_in_v1": "FastSRGAN 2x / 4x (720p -> 1080p); risk guardrail 720p -> 1080p.",
+      "finding": "Arithmetically wrong. 1280x720 at 2x is 1440p and at 4x is 2880p; 720p->1080p is 1.5x. Sub-pixel CNNs support integer scale factors only, so 1.5x requires 2x followed by a downsample.",
+      "correction": "Model matrix now states input resolution, integer model scale and explicit post-scale step. 4x is removed from v1 (a 2880p intermediate is ~177 MB of tensor memory on a phone)."
+    },
+    {
+      "id": "C5",
+      "severity": "high",
+      "claim_in_v1": "Tagline: Real-Time AI enhancement.",
+      "finding": "Contradicts the plan's own 35-55 ms/frame figure (18-29 fps ceiling before decode/encode) and its WorkManager background-job design.",
+      "correction": "Tagline drops 'Real-Time'. Live preview is real-time (Tiers 0/1). Export is offline and progress-driven (Tiers 2/3)."
+    },
+    {
+      "id": "C6",
+      "severity": "high",
+      "claim_in_v1": "Pipeline flow makes no mention of audio.",
+      "finding": "Audio was absent from the entire v1 plan; an upscaler that outputs silent video is broken.",
+      "correction": "Audio passthrough / AAC re-encode policy added, plus multi-track selection and A/V sync verification at any boundary."
+    },
+    {
+      "id": "C7",
+      "severity": "high",
+      "claim_in_v1": "Wrap compute in a generic ForegroundService with a persistent notification.",
+      "finding": "Android 15 added a purpose-built mediaProcessing foreground service type for exactly this workload. dataSync and mediaProcessing services are limited to 6 hours per 24-hour period (shared across the app's services of that type), after which onTimeout() is called and failure to stopSelf() throws RemoteServiceException; starting a new one with the budget exhausted throws ForegroundServiceStartNotAllowedException.",
+      "correction": "Use mediaProcessing (API 35+) with dataSync as the Android 14-and-below fallback; implement onTimeout(); track the 6-hour budget; write fragmented MP4 with checkpoints so long exports resume."
+    },
+    {
+      "id": "C8",
+      "severity": "high",
+      "claim_in_v1": "org.tensorflow:tensorflow-lite 2.14.0; NNAPI delegate on the MobileSR row.",
+      "finding": "TensorFlow Lite is now LiteRT (com.google.ai.edge.litert:*). NNAPI was deprecated in Android 15 and the Play-services LiteRT package ships no NNAPI delegate at all.",
+      "correction": "Migrate coordinates (litert 1.4.2 for the Interpreter line, minSdk 21; 2.2.0 for CompiledModel, minSdk 23, NDK r26a). Remove NNAPI; use the GPU delegate."
+    },
+    {
+      "id": "C9",
+      "severity": "medium",
+      "claim_in_v1": "Stated latencies such as ~12-18 ms/frame and ~35-55 ms/frame.",
+      "finding": "No harness, device or methodology exists; these are unmeasured assertions.",
+      "correction": "Retained only as labelled Phase 0 targets, with a measurement gate that must pass before the architecture is committed."
+    },
+    {
+      "id": "C10",
+      "severity": "medium",
+      "claim_in_v1": "Primary risk is LMK terminating the process above a RAM threshold.",
+      "finding": "A mediaProcessing foreground service is largely protected from LMK; the real failure modes are elsewhere.",
+      "correction": "Replaced with a 12-entry risk register covering in-pipeline inference cost, flicker, FGS budget, GPU OOM, thermal throttling, colour/range handling, driver-specific delegate failures, model licensing, temp storage, HDR, A/V sync and Play policy."
+    },
+    {
+      "id": "C11",
+      "severity": "medium",
+      "claim_in_v1": "Dependency versions media3 1.3.1 and work-runtime-ktx 2.9.0.",
+      "finding": "Stale by roughly two years. Media3 stable is 1.11.0 (2026-08-05).",
+      "correction": "Pinned to current versions; the Media3 1.6.0 effects API break is called out explicitly."
+    },
+    {
+      "id": "C12",
+      "severity": "medium",
+      "claim_in_v1": "Chunk video into 5-10 second blocks via Media3 Transformer to bound RAM.",
+      "finding": "Transformer already streams decode->effect->encode incrementally, so memory is bounded without cutting the file. Chunking the encode forces an IDR at every boundary (bitrate spikes, visible seams) and requires concatenation.",
+      "correction": "Chunking demoted to a contingency, to be used only if measurement shows a real memory problem, and then only on keyframe boundaries. Crash recovery is handled instead by fragmented MP4 plus presentation-timestamp checkpoints."
+    }
+  ],
+  "production_pillars": [
+    {
+      "id": 1,
+      "name": "GPU-Resident Frame Pipeline",
+      "description": "Never materialise video frames as CPU Bitmaps. Frames stay as GL textures inside a Media3 GL pipeline. Phase 1 accepts a two-copy bridge into the delegate; Phase 2 targets true zero-copy via the C++ CompiledModel API.",
+      "honesty_note": "Do not describe Phase 1 as zero-copy. It is not."
+    },
+    {
+      "id": 2,
+      "name": "One Effect Chain, Two Hosts",
+      "description": "A single List<Effect> defines 'enhanced'. ExoPlayer.setVideoEffects hosts it for preview; EditedMediaItem.setEffects hosts it for export. This makes the comparison slider honest and removes preview/export visual drift."
+    },
+    {
+      "id": 3,
+      "name": "Determinism-Ordered Adaptive Tiers",
+      "description": "Tiers are ranked by temporal determinism, not raw sharpness: Lanczos+CAS (universal, flicker-free) -> FSR 1.0 EASU/RCAS shader -> ESPCN sub-pixel CNN (default AI) -> GAN SR (opt-in, stabilized, warned). Capability detection picks the tier; any delegate init failure falls through."
+    },
+    {
+      "id": 4,
+      "name": "Temporal Consistency",
+      "description": "Frame-independent super-resolution shimmers. A motion-gated temporal stabilizer is on by default for the GAN tier and available for the AI tier. This is a quality requirement, not a polish item."
+    },
+    {
+      "id": 5,
+      "name": "Resumable Background Export",
+      "description": "WorkManager schedules; a mediaProcessing foreground service executes; fragmented MP4 with presentation-timestamp checkpoints makes interruption recoverable. The 6-hour per-24-hour service budget is tracked and surfaced to the user."
+    },
+    {
+      "id": 6,
+      "name": "Measure Before You Commit",
+      "description": "A benchmark and quality harness (PSNR/SSIM/LPIPS against bicubic and Lanczos references, fixed clip set) exists before the first UI screen. Every quality claim must be reproducible."
+    }
+  ],
+  "capability_tiers": [
+    {
+      "tier": 0,
+      "name": "Lanczos + CAS",
+      "implementation": "Media3 built-in LanczosResample / Presentation + custom CAS sharpen GlEffect",
+      "temporal_behaviour": "deterministic, zero flicker",
+      "role": "universal floor; always ships; also the fallback for every failure mode"
+    },
+    {
+      "tier": 1,
+      "name": "FSR 1.0 EASU + RCAS",
+      "implementation": "GLSL ES 3.0 shader port of AMD FSR 1.0 (MIT-licensed)",
+      "temporal_behaviour": "deterministic",
+      "role": "low-end SoC, battery saver, real-time preview"
+    },
+    {
+      "tier": 2,
+      "name": "ESPCN sub-pixel CNN",
+      "implementation": "LiteRT FP16 model on the GPU delegate (OpenCL)",
+      "temporal_behaviour": "near-deterministic",
+      "role": "default AI quality mode"
+    },
+    {
+      "tier": 3,
+      "name": "GAN SR (Fast-SRGAN class)",
+      "implementation": "LiteRT FP16 model on the GPU delegate or Hexagon, plus temporal stabilizer",
+      "temporal_behaviour": "flickers without stabilization",
+      "role": "opt-in 'max detail' mode with an explicit user-facing warning; never the default"
+    }
+  ],
+  "ai_model_matrix": [
+    {
+      "tier": 0,
+      "model_architecture": "None (Lanczos resample + CAS sharpen)",
+      "input_resolution": "any",
+      "integer_model_scale": "n/a",
+      "post_scale_step": "none",
+      "target_resolution": "any up to 4K",
+      "latency_target_ms_per_frame": "1-3",
+      "hardware_delegate": "OpenGL ES shader",
+      "target_device_profile": "all devices",
+      "measured": false
+    },
+    {
+      "tier": 1,
+      "model_architecture": "AMD FSR 1.0 (EASU + RCAS) shader port",
+      "input_resolution": "any",
+      "integer_model_scale": "n/a (spatial)",
+      "post_scale_step": "none",
+      "target_resolution": "any up to 1080p",
+      "latency_target_ms_per_frame": "2-5",
+      "hardware_delegate": "OpenGL ES 3.0 shader",
+      "target_device_profile": "low-end SoC fallback, battery saver, live preview",
+      "measured": false
+    },
+    {
+      "tier": 2,
+      "model_architecture": "ESPCN (Sub-Pixel CNN)",
+      "input_resolution": "640x360",
+      "integer_model_scale": "2x",
+      "post_scale_step": "none",
+      "target_resolution": "1280x720",
+      "latency_target_ms_per_frame": "<=20",
+      "hardware_delegate": "LiteRT GPU delegate (OpenCL)",
+      "target_device_profile": "mid-range and above",
+      "measured": false
+    },
+    {
+      "tier": 2,
+      "model_architecture": "ESPCN (Sub-Pixel CNN)",
+      "input_resolution": "854x480",
+      "integer_model_scale": "2x",
+      "post_scale_step": "none",
+      "target_resolution": "1708x960",
+      "latency_target_ms_per_frame": "<=35",
+      "hardware_delegate": "LiteRT GPU delegate (OpenCL)",
+      "target_device_profile": "mid-range and above",
+      "measured": false
+    },
+    {
+      "tier": 2,
+      "model_architecture": "ESPCN (Sub-Pixel CNN)",
+      "input_resolution": "1280x720",
+      "integer_model_scale": "2x",
+      "post_scale_step": "Lanczos downscale to 1080p",
+      "target_resolution": "1920x1080",
+      "latency_target_ms_per_frame": "<=60",
+      "hardware_delegate": "LiteRT GPU delegate (OpenCL)",
+      "target_device_profile": "upper mid-range and flagship",
+      "measured": false,
+      "note": "1.5x is not expressible by a sub-pixel model; the downscale cost is included in the budget."
+    },
+    {
+      "tier": 3,
+      "model_architecture": "Fast-SRGAN class (GAN)",
+      "input_resolution": "854x480",
+      "integer_model_scale": "2x",
+      "post_scale_step": "none",
+      "target_resolution": "1708x960",
+      "latency_target_ms_per_frame": "<=55",
+      "hardware_delegate": "LiteRT GPU delegate or Qualcomm Hexagon",
+      "target_device_profile": "flagship, opt-in only, temporal stabilizer required",
+      "measured": false
+    },
+    {
+      "tier": 3,
+      "model_architecture": "Fast-SRGAN class (GAN)",
+      "input_resolution": "1280x720",
+      "integer_model_scale": "2x",
+      "post_scale_step": "Lanczos downscale to 1080p",
+      "target_resolution": "1920x1080",
+      "latency_target_ms_per_frame": "<=90",
+      "hardware_delegate": "LiteRT GPU delegate or Qualcomm Hexagon",
+      "target_device_profile": "flagship, opt-in only, temporal stabilizer required",
+      "measured": false
+    }
+  ],
+  "dependencies": {
+    "media_processing": [
+      "androidx.media3:media3-transformer:1.11.0",
+      "androidx.media3:media3-effect:1.11.0",
+      "androidx.media3:media3-exoplayer:1.11.0",
+      "androidx.media3:media3-ui:1.11.0"
+    ],
+    "ai_engine": [
+      "com.google.ai.edge.litert:litert:1.4.2",
+      "com.google.ai.edge.litert:litert-gpu:1.4.2",
+      "com.google.ai.edge.litert:litert-gpu-api:1.4.2"
+    ],
+    "ai_engine_phase2_zero_copy": [
+      "com.google.ai.edge.litert:litert:2.2.0 (CompiledModel C++ API, NDK r26a, minSdk 23)"
+    ],
+    "ai_engine_alternative_to_evaluate": [
+      "com.google.android.gms:play-services-tflite-java",
+      "com.google.android.gms:play-services-tflite-gpu"
+    ],
+    "background_service": [
+      "androidx.work:work-runtime-ktx (pin to current stable at implementation time)"
+    ],
+    "removed_from_v1": [
+      "org.tensorflow:tensorflow-lite:2.14.0 (project renamed to LiteRT)",
+      "org.tensorflow:tensorflow-lite-gpu:2.14.0 (replaced by com.google.ai.edge.litert:litert-gpu)",
+      "NNAPI delegate (deprecated in Android 15; absent from the Play-services LiteRT package)",
+      "androidx.media3:*:1.3.1 (superseded by 1.11.0; note the 1.6.0 effects API break)"
+    ]
+  },
+  "implementation_code_blueprints": {
+    "status": "ILLUSTRATIVE ONLY. Not compiled and not executed - this sandbox has no JDK, Gradle or Android SDK. Validate in Phase 0.",
+    "engine_class": "com.videoupscaler.ai.enhance.AiUpscaleEffect",
+    "kotlin_source": "// androidx.media3.effect is @UnstableApi - annotate consumers with @OptIn(UnstableApi::class).\nclass AiUpscaleEffect(\n    private val modelAsset: String,\n    private val scale: Int,      // integer only: 2 or 3\n    private val blend: Float,    // 0.0 = passthrough, 1.0 = full AI\n) : GlEffect {\n    // Correct signature: toGlShaderProgram(Context, boolean useHdr).\n    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram {\n        // Create the engine here, on the GL thread Media3 calls this from, so the LiteRT\n        // delegate is bound to the right thread and EGLContext.\n        val engine = SrEngine.create(context.assets, modelAsset)\n        return AiUpscaleGlShaderProgram(useHdr, engine, scale, blend)\n    }\n}\n\nclass AiUpscaleGlShaderProgram(\n    useHdr: Boolean,\n    private val engine: SrEngine,\n    private val scale: Int,\n    private val blend: Float,\n) : BaseGlShaderProgram(\n    // Real signature: BaseGlShaderProgram(boolean useHighPrecisionColorComponents, int texturePoolCapacity)\n    /* useHighPrecisionColorComponents = */ useHdr,\n    /* texturePoolCapacity = */ 2,\n) {\n    private var inputW = 0\n    private var inputH = 0\n    private var readback: ByteBuffer = ByteBuffer.allocateDirect(0)\n\n    // Called before the first frame of a given input size. Returns the OUTPUT size as android.util.Size.\n    override fun configure(inputWidth: Int, inputHeight: Int): Size {\n        inputW = inputWidth; inputH = inputHeight\n        ensureReadback(inputWidth, inputHeight)\n        return Size(inputWidth * scale, inputHeight * scale)\n    }\n\n    // Called on Media3's GL thread with the input texture already bound.\n    // Synchronous by contract. If inference is async, override\n    // queueInputFrame(GlObjectsProvider, GlTextureInfo, long) instead and drive outputListener yourself.\n    override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {\n        // HONEST PATH: two copies. This is NOT zero-copy.\n        glReadPixels(0, 0, inputW, inputH, GL_RGBA, GL_UNSIGNED_BYTE, readback)  // copy 1: GPU -> CPU\n        val out = engine.run(readback, inputW, inputH)                           // delegate: CPU -> GPU -> CPU\n        val outTex = uploadToPooledTexture(out)                                  // copy 2: CPU -> GPU\n        composite(outTex, blend)                                                 // residual against base\n        outputListener.onOutputFrameAvailable(outTex, presentationTimeUs)\n    }\n\n    override fun release() { engine.close(); super.release() }\n}",
+    "verified_media3_api": {
+      "note": "Signatures below checked against the androidx.media3 API reference on 2026-08-28.",
+      "GlEffect": "GlShaderProgram toGlShaderProgram(Context context, boolean useHdr)",
+      "BaseGlShaderProgram_constructor": "BaseGlShaderProgram(boolean useHighPrecisionColorComponents, int texturePoolCapacity) - takes NO Context and NO useHdr flag",
+      "configure": "abstract android.util.Size configure(int inputWidth, int inputHeight) - returns the OUTPUT size",
+      "drawFrame": "abstract void drawFrame(int inputTexId, long presentationTimeUs) - the synchronous per-frame hook",
+      "queueInputFrame": "void queueInputFrame(GlObjectsProvider glObjectsProvider, GlTextureInfo inputTexture, long presentationTimeUs) - override only for asynchronous work",
+      "GlTextureProducer": "exposes only releaseOutputTexture(long presentationTimeUs); has no width/height and no Listener.Releasable",
+      "output_signal": "outputListener.onOutputFrameAvailable(GlTextureInfo, long presentationTimeUs); owner must return it via releaseOutputFrame(GlTextureInfo)",
+      "LanczosResample": "NO public constructor. Created only via the static factories scaleToFit(int width, int height) and scaleToFitWithFlexibleOrientation(int firstDimension, int secondDimension). Use the flexible-orientation form so portrait video upscales to 1080x1920 instead of being letterboxed.",
+      "Transformer.Listener": "onCompleted(Composition, ExportResult), onError(Composition, ExportResult, ExportException), onFallbackApplied(Composition, TransformationRequest, TransformationRequest) - all default methods.",
+      "ExportException": "public final int errorCode is a FIELD; the error NAME is a method getErrorCodeName(), not a field.",
+      "ProgressHolder": "public @IntRange(0,100) int progress is a FIELD. Poll Transformer.getProgress(ProgressHolder); it returns a @Transformer.ProgressState int."
+    },
+    "export_wiring": "val chain = listOf(\n    // LanczosResample has NO public constructor - static factory only.\n    LanczosResample.scaleToFitWithFlexibleOrientation(targetLong, targetShort),\n    AiUpscaleEffect(model, scale = 2, blend = 0.7f),\n    TemporalStabilizeEffect(strength = 0.3f),\n    CasSharpenEffect(amount = 0.35f),\n)\n\n// Preview\nexoPlayer.setVideoEffects(chain.filter { it.isRealtimeSafe })\n\n// Export. NOTE: Transformer.Builder.setVideoEffects() was REMOVED in Media3 1.6.0.\nval edited = EditedMediaItem.Builder(MediaItem.fromUri(inputUri))\n    .setEffects(Effects(/* audioProcessors = */ emptyList(), /* videoEffects = */ chain))\n    .build()\n\nTransformer.Builder(context)\n    .setVideoMimeType(MimeTypes.VIDEO_H265)\n    .setAudioMimeType(MimeTypes.AUDIO_AAC)   // audio is preserved; v1 never mentioned it\n    .setHdrMode(HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)\n    .addListener(exportListener)\n    .build()\n    .start(edited, outputPath)",
+    "threading_rules": [
+      "Create the interpreter on the GL thread and invoke it only from that thread; the LiteRT GPU delegate throws 'GpuDelegate must run on the same thread where it was initialized' otherwise.",
+      "The EGLContext must be current on the invoking thread for the delegate's GL path; BaseGlShaderProgram.queueInputFrame already satisfies this.",
+      "Create the interpreter once and reuse it; never construct per frame.",
+      "Reuse one set of textures and one PBO across frames; per-frame allocation dominates runtime."
+    ],
+    "why_v1_blueprint_failed": "v1 passed android.hardware.HardwareBuffer instances into interpreter.runForMultipleInputsOutputs, which accepts only multidimensional arrays or java.nio.Buffer types (ByteBuffer, FloatBuffer, IntBuffer, LongBuffer). The call cannot work as written."
+  },
+  "zero_copy_phase2": {
+    "gate": "Only begin after Phase 0 proves the two-copy path is too slow on target devices.",
+    "cost": "A C++/NDK project: build system, JNI, ABI splits, and a second code path to test.",
+    "mechanism": "LiteRT 2.x CompiledModel API. TensorBuffer::CreateManaged(env, kLiteRtTensorBufferTypeAhwb, ...) yields an AHardwareBuffer-backed tensor; .GetGlBuffer() and .GetOpenClMemory() expose it to GL and OpenCL with no copy. Ordering uses an EGL sync fence event instead of a CPU wait."
+  },
+  "risk_mitigation": {
+    "register": [
+      {
+        "id": "R1",
+        "risk": "In-pipeline inference too slow due to two-copy overhead",
+        "severity": "critical",
+        "mitigation": "Phase 0 gate; ship Tiers 0/1 if it fails; zero-copy only if justified by measurement"
+      },
+      {
+        "id": "R2",
+        "risk": "Temporal flicker from GAN super-resolution",
+        "severity": "critical",
+        "mitigation": "Tier 3 opt-in; temporal stabilizer; tiers ordered by determinism"
+      },
+      {
+        "id": "R3",
+        "risk": "6h/24h foreground service budget exhausted mid-export",
+        "severity": "high",
+        "mitigation": "Implement onTimeout(); track the budget; fragmented MP4 checkpoint and resume"
+      },
+      {
+        "id": "R4",
+        "risk": "GPU OOM from large intermediate textures",
+        "severity": "high",
+        "mitigation": "Cap target resolution by RAM class; reuse textures; 4x removed from v1"
+      },
+      {
+        "id": "R5",
+        "risk": "Thermal throttling after several minutes of full GPU load",
+        "severity": "high",
+        "mitigation": "Phase 0 sustained-thermal test; adaptive tier downgrade under thermal pressure"
+      },
+      {
+        "id": "R6",
+        "risk": "Colour or range shift (BT.601 vs BT.709, limited vs full range)",
+        "severity": "high",
+        "mitigation": "Explicit colour handling in the effect chain plus a colour-accuracy clip in the harness"
+      },
+      {
+        "id": "R7",
+        "risk": "Delegate initialisation throws on specific GPU drivers",
+        "severity": "high",
+        "mitigation": "CompatibilityList plus a catch-all fallback to Tier 1, per device"
+      },
+      {
+        "id": "R8",
+        "risk": "Model weight or training-dataset licensing blocks shipping",
+        "severity": "high",
+        "mitigation": "Verify per model before bundling; prefer self-trained weights; record provenance in MODEL_CARD.md"
+      },
+      {
+        "id": "R9",
+        "risk": "Temp storage exhaustion from multi-GB intermediates",
+        "severity": "medium",
+        "mitigation": "Pre-flight free-space check; stream instead of buffering; clean up on cancel"
+      },
+      {
+        "id": "R10",
+        "risk": "HDR input mishandled",
+        "severity": "medium",
+        "mitigation": "Tone-map to SDR via Media3; HDR output out of scope for v1"
+      },
+      {
+        "id": "R11",
+        "risk": "A/V desync at any boundary",
+        "severity": "medium",
+        "mitigation": "No encode chunking (v1 pillar 3 demoted); A/V sync test in the harness"
+      },
+      {
+        "id": "R12",
+        "risk": "Play policy on background processing and storage permissions",
+        "severity": "medium",
+        "mitigation": "SAF-only file access; mediaProcessing service type; no MANAGE_EXTERNAL_STORAGE"
+      }
+    ],
+    "superseded_v1_note": "v1's only risk was LMK termination above a RAM threshold. A mediaProcessing foreground service is largely protected from LMK, so that framing understated the real failure modes."
+  },
+  "licensing": {
+    "assets": [
+      {
+        "asset": "AMD FSR 1.0 (EASU/RCAS)",
+        "code_license": "MIT (confirmed, GPUOpen)",
+        "weights": "n/a (algorithm)",
+        "status": "clear to port; retain the notice"
+      },
+      {
+        "asset": "Fast-SRGAN",
+        "code_license": "MIT (confirmed, HasnainRaz/Fast-SRGAN)",
+        "weights": "unverified",
+        "status": "verify the released checkpoint and its training set before bundling"
+      },
+      {
+        "asset": "ESPCN",
+        "code_license": "implementations MIT; paper code varies",
+        "weights": "unverified",
+        "status": "prefer training your own on a permissively licensed corpus"
+      }
+    ],
+    "recommendation": "Train ESPCN in-house and ship your own FP16 weights. It removes the licensing question, costs little (ESPCN trains in hours), and yields a model tuned to real phone video rather than DIV2K crops. Check DIV800/DIV2K-Flickr2K licensing per use if those sets are used."
+  },
+  "development_phases": [
+    {
+      "phase": 0,
+      "title": "Feasibility & Measurement",
+      "duration": "1-2 weeks",
+      "tasks": [
+        "Build the benchmark harness and evaluation clip set (PSNR/SSIM/LPIPS vs bicubic and Lanczos references)",
+        "Measure Tier 0, Tier 1 and Tier 2 standalone and inside BaseGlShaderProgram.queueInputFrame",
+        "Run a 10-minute sustained-thermal test",
+        "Measure the glReadPixels + upload round trip alone as the floor the model must beat",
+        "Decide: full AI product, or a sharpening-only product"
+      ],
+      "exit_gate": "In-pipeline ESPCN <= 25 ms/frame on two mid-range devices (one Adreno, one Mali), sustained over 600 frames"
+    },
+    {
+      "phase": 1,
+      "title": "Pipeline & Tiers 0/1",
+      "duration": "2-3 weeks",
+      "tasks": [
+        "Compose shell, SAF picker, Media3 ExoPlayer preview",
+        "LanczosResample plus a CAS/FSR shader port as custom GlEffects",
+        "Export via Transformer with audio preserved, rotation correct, H.265 output"
+      ],
+      "exit_gate": "60-second clip exported with audio in sync and colours matching the source, on 3 devices"
+    },
+    {
+      "phase": 2,
+      "title": "LiteRT Effect Integration",
+      "duration": "3-4 weeks",
+      "tasks": [
+        "AiUpscaleEffect and BaseGlShaderProgram, FP16, two-copy path",
+        "Capability detection and tier fallback",
+        "Threading and EGLContext rules enforced"
+      ],
+      "exit_gate": "Export beats the Lanczos reference on the harness clips at a measured frame cost"
+    },
+    {
+      "phase": 3,
+      "title": "Reliability & Long Exports",
+      "duration": "2-3 weeks",
+      "tasks": [
+        "mediaProcessing foreground service, onTimeout(), 6-hour budget tracker",
+        "Fragmented MP4 checkpoint and resume; cancel; progress and ETA",
+        "Thermal-triggered tier downgrade"
+      ],
+      "exit_gate": "30-minute export completes; kill-and-resume recovers; budget path tested via 'adb shell am compat enable FGS_INTRODUCE_TIME_LIMITS'"
+    },
+    {
+      "phase": 4,
+      "title": "Quality & UX",
+      "duration": "2-3 weeks",
+      "tasks": [
+        "Temporal stabilizer, residual blend control, Tier 3 opt-in with warning",
+        "A/B comparison slider on a custom Compose canvas (honest because preview and export share the chain)"
+      ],
+      "exit_gate": "Flicker rated acceptable in a blind review on the harness clips"
+    },
+    {
+      "phase": 5,
+      "title": "Hardening & Release",
+      "duration": "2-3 weeks",
+      "tasks": [
+        "Device matrix: Adreno high/mid, Mali high/mid, one Tensor, across Android 12-16",
+        "Crash-free target, battery and thermal report, APK size budget (Play Asset Delivery if needed)"
+      ],
+      "exit_gate": "Zero crashes across the matrix on a 10-export soak"
+    },
+    {
+      "phase": 6,
+      "title": "Zero-Copy NDK Path (deferred)",
+      "duration": "TBD",
+      "tasks": [
+        "LiteRT 2.x CompiledModel C++ API with AHardwareBuffer / GL / OpenCL interop",
+        "EGL sync fence event ordering"
+      ],
+      "exit_gate": "Begins only on evidence from Phase 0/2 that the two-copy path is too slow"
+    }
+  ],
+  "kept_from_v1": [
+    "On-device only, no cloud - correct and differentiating; keep as the headline",
+    "Never decode frames into Bitmap - correct instinct; the mechanism was wrong, not the goal",
+    "Adaptive capability-based fallback - correct; strengthened by ordering tiers by determinism",
+    "Foreground service with a persistent notification - correct; corrected to mediaProcessing plus budget handling",
+    "Comparison slider UX - correct; now trustworthy because preview and export share one effect chain"
+  ],
+  "open_questions": [
+    "Is the Play-services LiteRT runtime acceptable, or must the delegate be bundled for non-Play devices?",
+    "Ship models in the APK or via Play Asset Delivery? Depends on final model sizes versus the base module limit.",
+    "Is 1080p the hard ceiling for v1, or is 1440p expected? This materially changes the memory budget.",
+    "Monetisation model - affects whether Tier 3 is a paid tier and how models are delivered.",
+    "Is a temp-space pre-flight check sufficient, or is user-visible storage UI required?"
+  ],
+  "verification_status": {
+    "external_claims": "Verified 2026-08-28 against vendor documentation and release metadata; sources listed in docs/PLAN.md Appendix B.",
+    "code": "Not compiled, not executed. No JDK, Gradle or Android SDK in this environment.",
+    "latency_figures": "All are targets, none are measurements.",
+    "model_licenses": "FSR 1.0 and Fast-SRGAN code licences confirmed MIT; weight and dataset licences unconfirmed.",
+    "repository_state": "README.md and docs/ only - no source, no build files."
+  }
+}

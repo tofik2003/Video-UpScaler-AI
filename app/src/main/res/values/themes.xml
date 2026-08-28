@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Dark window background so the cold-start window matches the Compose theme (which defaults to
+      dark per DESIGN.md 7.1). Without this the app flashes white before the first frame is composed,
+      and the system status-bar icons come up in the wrong colour for the content.
+    -->
+    <style name="Theme.UpScaler" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>
