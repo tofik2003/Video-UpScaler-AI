@@ -385,13 +385,30 @@ val edited = EditedMediaItem.Builder(MediaItem.fromUri(inputUri))
     .build()
 
 Transformer.Builder(context)
-    .setVideoMimeType(MimeTypes.VIDEO_H265)
+    .setVideoMimeType(MimeTypes.VIDEO_H264)   // not H265 — see the note below
     .setAudioMimeType(MimeTypes.AUDIO_AAC)   // audio is preserved; v1 never mentioned it
-    .setHdrMode(HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
     .addListener(exportListener)
     .build()
     .start(edited, outputPath)
 ```
+
+**Two corrections to this block, both verified against the Media3 reference:**
+
+- `setHdrMode` is **not** a method on `Transformer.Builder`. It lives on `Composition.Builder`
+  (`Composition.Builder(sequences).setHdrMode(Composition.HDR_MODE_KEEP_HDR)`), so it is
+  **unreachable** from the convenient `start(EditedMediaItem, path)` overload — that overload builds
+  the `Composition` for you. Reaching it would mean constructing the `Composition` manually.
+
+  Leave the default. The default is `HDR_MODE_KEEP_HDR`, and if HDR editing is unsupported on the
+  device Transformer **automatically** falls back to
+  `HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL`, reported through
+  `Transformer.Listener.onFallbackApplied`. Forcing the OpenGL constant would **throw on API 24–28**
+  — OpenGL tone-mapping needs API 29+, MediaCodec tone-mapping API 31+ — and this project's minSdk
+  is 24. The automatic fallback is the correct behaviour and it is already handled.
+
+- `VIDEO_H265` was the plan's choice but is not universally encodable. Phase 1 uses H.264 so the
+  first build does not fail on a codec gap; H.265 can be offered later behind a
+  `MediaCodecList` capability check.
 
 ### 6.3 Threading and context rules (these are the ones that actually bite)
 

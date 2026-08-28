@@ -51,7 +51,7 @@ jobs:
           ls "$ANDROID_HOME/platforms"
           ls "$ANDROID_HOME/build-tools"
 
-      # System Gradle (9.7.1 on ubuntu-latest) satisfies AGP 9.3.2's minimum of 9.5.0.
+          # System Gradle (9.7.1 on ubuntu-latest) satisfies AGP 9.0.1's minimum of 9.1.0.
       # No Gradle wrapper is committed yet -- see docs/BUILD_AND_RUN.md.
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
