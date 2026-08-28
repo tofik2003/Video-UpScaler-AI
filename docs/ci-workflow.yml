@@ -56,12 +56,21 @@ jobs:
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Report APK
-        run: ls -lh app/build/outputs/apk/debug/
+      # AGP 9 may relocate build outputs. Rather than pin one path and letting the upload step fail
+      # on an otherwise-successful build, locate the APK and fail here with a useful listing.
+      - name: Locate APK
+        run: |
+          find . -name '*.apk' -not -path '*/caches/*' -print -exec ls -lh {} \;
+          if ! find . -name '*.apk' -not -path '*/caches/*' | grep -q .; then
+            echo "::error::Build reported success but produced no APK"
+            exit 1
+          fi
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: |
+            app/build/outputs/**/*.apk
+            **/outputs/apk/**/*.apk
           if-no-files-found: error
